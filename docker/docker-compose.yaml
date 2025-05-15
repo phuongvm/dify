@@ -5,6 +5,12 @@
 # ==================================================================
 
 x-shared-env: &shared-api-worker-env
+  MODEL_LB_ENABLED: ${MODEL_LB_ENABLED:-true}
+  CAN_REPLACE_LOGO: ${CAN_REPLACE_LOGO:-true}
+  DATASET_OPERATOR_ENABLED: ${DATASET_OPERATOR_ENABLED:-true}
+  ALLOW_CREATE_WORKSPACE: ${ALLOW_CREATE_WORKSPACE:-true}
+  ENABLE_SOCIAL_OAUTH_LOGIN: ${ENABLE_SOCIAL_OAUTH_LOGIN:-true}
+  ALLOW_REGISTER: ${ALLOW_REGISTER:-true}
   CONSOLE_API_URL: ${CONSOLE_API_URL:-}
   CONSOLE_WEB_URL: ${CONSOLE_WEB_URL:-}
   SERVICE_API_URL: ${SERVICE_API_URL:-}
@@ -792,6 +798,8 @@ services:
       - ./volumes/qdrant:/qdrant/storage
     environment:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-difyai123456}
+    networks:
+      - default
 
   # The Couchbase vector store.
   couchbase-server:
@@ -1159,6 +1167,10 @@ services:
     profiles:
       - unstructured
     restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - UNSTRUCTURED_API_KEY=${UNSTRUCTURED_API_KEY:-rL4jWZwrEtLgZHZ3LsN9}
     volumes:
       - ./volumes/unstructured:/app/data
 
@@ -1172,6 +1184,8 @@ networks:
   opensearch-net:
     driver: bridge
     internal: true
+  default:
+    driver: bridge
 
 volumes:
   oradata:
