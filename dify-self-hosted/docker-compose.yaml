@@ -5,6 +5,11 @@
 # ==================================================================
 
 x-shared-env: &shared-api-worker-env
+  MODEL_LB_ENABLED: ${MODEL_LB_ENABLED:-true}
+  CAN_REPLACE_LOGO: ${CAN_REPLACE_LOGO:-true}
+  DATASET_OPERATOR_ENABLED: ${DATASET_OPERATOR_ENABLED:-true}
+  ALLOW_CREATE_WORKSPACE: ${ALLOW_CREATE_WORKSPACE:-true}
+  APP_MODE: ${APP_MODE:-SAAS}
   CONSOLE_API_URL: ${CONSOLE_API_URL:-}
   CONSOLE_WEB_URL: ${CONSOLE_WEB_URL:-}
   SERVICE_API_URL: ${SERVICE_API_URL:-}
@@ -784,7 +789,7 @@ services:
   # Qdrant vector store.
   # (if used, you need to set VECTOR_STORE to qdrant in the api & worker service.)
   qdrant:
-    image: langgenius/qdrant:v1.7.3
+    image: qdrant/qdrant:latest
     profiles:
       - qdrant
     restart: always
@@ -792,6 +797,9 @@ services:
       - c:/volumes/dify-self-hosted/qdrant:/qdrant/storage
     environment:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-difyai123456}
+    ports:
+      - "6333:6333"  # HTTP API và UI
+      - "6334:6334"  # gRPC API
 
   # The Couchbase vector store.
   couchbase-server:
