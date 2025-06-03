@@ -113,8 +113,6 @@ const translation = {
     openInExplore: '在“探索”中打开',
     loadMore: '加载更多',
     noHistory: '没有历史版本',
-    referenceVar: '引用变量',
-    noExist: '不存在',
   },
   env: {
     envPanelTitle: '环境变量',
@@ -309,6 +307,7 @@ const translation = {
     organizeBlocks: '整理节点',
     change: '更改',
     optional: '（选填）',
+    moveToThisNode: '定位至此节点',
   },
   nodes: {
     common: {
@@ -599,7 +598,6 @@ const translation = {
       selectVariable: '选择变量',
       addSubVariable: '添加子变量',
       select: '选择',
-      condition: '条件',
     },
     variableAssigner: {
       title: '变量赋值',

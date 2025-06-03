@@ -113,8 +113,6 @@ const translation = {
     addFailureBranch: 'Add Fail Branch',
     loadMore: 'Load More',
     noHistory: 'No History',
-    referenceVar: 'Reference Variable',
-    noExist: 'No such variable',
   },
   env: {
     envPanelTitle: 'Environment Variables',
@@ -302,6 +300,7 @@ const translation = {
     addNextStep: 'Add the next block in this workflow',
     selectNextStep: 'Select Next Block',
     runThisStep: 'Run this step',
+    moveToThisNode: 'Move to this node',
     checklist: 'Checklist',
     checklistTip: 'Make sure all issues are resolved before publishing',
     checklistResolved: 'All issues are resolved',
@@ -598,7 +597,6 @@ const translation = {
       selectVariable: 'Select variable...',
       addSubVariable: 'Sub Variable',
       select: 'Select',
-      condition: 'Condition',
     },
     variableAssigner: {
       title: 'Assign variables',
