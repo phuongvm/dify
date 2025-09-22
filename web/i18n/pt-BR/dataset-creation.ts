@@ -1,8 +1,6 @@
 const translation = {
   steps: {
     header: {
-      creation: 'Criar Conhecimento',
-      update: 'Adicionar dados',
       fallbackRoute: 'Conhecimento',
     },
     one: 'Escolher fonte de dados',
@@ -23,6 +21,7 @@ const translation = {
     uploader: {
       title: 'Enviar arquivo de texto',
       button: 'Arraste e solte arquivos ou pastas, ou',
+      buttonSingleFile: 'Arraste e solte um arquivo, ou',
       browse: 'Navegar',
       tip: 'Suporta {{supportTypes}}. Máximo de {{size}}MB cada.',
       validation: {
@@ -58,7 +57,6 @@ const translation = {
       crawlSubPage: 'Rastrear subpáginas',
       selectAll: 'Selecionar tudo',
       resetAll: 'Redefinir tudo',
-      firecrawlDocLink: 'https://docs.dify.ai/en/guides/knowledge-base/create-knowledge-and-upload-documents/import-content-data/sync-from-website',
       includeOnlyPaths: 'Incluir apenas caminhos',
       configure: 'Configurar',
       limit: 'Limite',
@@ -87,7 +85,6 @@ const translation = {
       configureJinaReader: 'Configurar o Leitor Jina',
       waterCrawlNotConfigured: 'Watercrawl não está configurado',
       waterCrawlNotConfiguredDescription: 'Configure o Watercrawl com a chave da API para usá-lo.',
-      watercrawlDocLink: 'https://docs.dify.ai/pt/guias/base-de-conhecimentos/criar-conhecimento-e-enviar-documentos/importar-dados-de-conteudo/sincronizar-a-partir-do-site',
       watercrawlDoc: 'Documentos do Watercrawl',
       configureWatercrawl: 'Configurar Watercrawl',
     },

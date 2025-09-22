@@ -1,4 +1,3 @@
-const { basePath, assetPrefix } = require('./utils/var-basePath')
 const { codeInspectorPlugin } = require('code-inspector-plugin')
 const withMDX = require('@next/mdx')({
   extension: /\.mdx?$/,
@@ -12,6 +11,9 @@ const withMDX = require('@next/mdx')({
     // providerImportSource: "@mdx-js/react",
   },
 })
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+})
 
 // the default url to prevent parse url error when running jest
 const hasSetWebPrefix = process.env.NEXT_PUBLIC_WEB_PREFIX
@@ -21,10 +23,12 @@ const remoteImageURLs = [hasSetWebPrefix ? new URL(`${process.env.NEXT_PUBLIC_WE
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  basePath,
-  assetPrefix,
+  basePath: process.env.NEXT_PUBLIC_BASE_PATH || '',
   webpack: (config, { dev, isServer }) => {
-    config.plugins.push(codeInspectorPlugin({ bundler: 'webpack' }))
+    if (dev) {
+      config.plugins.push(codeInspectorPlugin({ bundler: 'webpack' }))
+    }
+
     return config
   },
   productionBrowserSourceMaps: false, // enable browser source map generation during the production build
@@ -66,4 +70,4 @@ const nextConfig = {
   output: 'standalone',
 }
 
-module.exports = withMDX(nextConfig)
+module.exports = withBundleAnalyzer(withMDX(nextConfig))

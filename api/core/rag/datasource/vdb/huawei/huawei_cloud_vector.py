@@ -127,7 +127,7 @@ class HuaweiCloudVector(BaseVector):
         docs = []
         for doc, score in docs_and_scores:
             score_threshold = float(kwargs.get("score_threshold") or 0.0)
-            if score > score_threshold:
+            if score >= score_threshold:
                 if doc.metadata is not None:
                     doc.metadata["score"] = score
             docs.append(doc)
@@ -164,7 +164,7 @@ class HuaweiCloudVector(BaseVector):
         with redis_client.lock(lock_name, timeout=20):
             collection_exist_cache_key = f"vector_indexing_{self._collection_name}"
             if redis_client.get(collection_exist_cache_key):
-                logger.info(f"Collection {self._collection_name} already exists.")
+                logger.info("Collection %s already exists.", self._collection_name)
                 return
 
             if not self._client.indices.exists(index=self._collection_name):

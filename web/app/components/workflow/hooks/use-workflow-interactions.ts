@@ -346,7 +346,7 @@ export const useDSL = () => {
 
   const appDetail = useAppStore(s => s.appDetail)
 
-  const handleExportDSL = useCallback(async (include = false) => {
+  const handleExportDSL = useCallback(async (include = false, workflowId?: string) => {
     if (!appDetail)
       return
 
@@ -358,6 +358,7 @@ export const useDSL = () => {
       await doSyncWorkflowDraft()
       const { data } = await exportAppConfig({
         appID: appDetail.id,
+        workflowID: workflowId,
         include,
       })
       const a = document.createElement('a')
@@ -399,5 +400,31 @@ export const useDSL = () => {
   return {
     exportCheck,
     handleExportDSL,
+  }
+}
+
+export const useWorkflowCanvasMaximize = () => {
+  const { eventEmitter } = useEventEmitterContextContext()
+
+  const maximizeCanvas = useStore(s => s.maximizeCanvas)
+  const setMaximizeCanvas = useStore(s => s.setMaximizeCanvas)
+  const {
+    getNodesReadOnly,
+  } = useNodesReadOnly()
+
+  const handleToggleMaximizeCanvas = useCallback(() => {
+    if (getNodesReadOnly())
+      return
+
+    setMaximizeCanvas(!maximizeCanvas)
+    localStorage.setItem('workflow-canvas-maximize', String(!maximizeCanvas))
+    eventEmitter?.emit({
+      type: 'workflow-canvas-maximize',
+      payload: !maximizeCanvas,
+    } as any)
+  }, [eventEmitter, getNodesReadOnly, maximizeCanvas, setMaximizeCanvas])
+
+  return {
+    handleToggleMaximizeCanvas,
   }
 }
