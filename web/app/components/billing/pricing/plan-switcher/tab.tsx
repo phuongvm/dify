@@ -1,5 +1,6 @@
-import React, { useCallback } from 'react'
-import cn from '@/utils/classnames'
+import * as React from 'react'
+import { useCallback } from 'react'
+import { cn } from '@/utils/classnames'
 
 type TabProps<T> = {
   Icon: React.ComponentType<{ isActive: boolean }>
@@ -22,13 +23,13 @@ const Tab = <T,>({
 
   return (
     <div
-      className='flex cursor-pointer items-center justify-center gap-x-2 px-5 py-3'
+      className="flex cursor-pointer items-center justify-center gap-x-2 px-5 py-3"
       onClick={handleClick}
     >
       <Icon isActive={isActive} />
       <span
         className={cn(
-          'system-xl-semibold text-text-secondary',
+          'text-text-secondary system-xl-semibold',
           isActive && 'text-saas-dify-blue-accessible',
         )}
       >

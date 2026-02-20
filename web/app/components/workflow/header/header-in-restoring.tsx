@@ -1,8 +1,20 @@
+import { RiHistoryLine } from '@remixicon/react'
 import {
   useCallback,
 } from 'react'
-import { RiHistoryLine } from '@remixicon/react'
 import { useTranslation } from 'react-i18next'
+import Button from '@/app/components/base/button'
+import { useFeaturesStore } from '@/app/components/base/features/hooks'
+import { useSelector as useAppContextSelector } from '@/context/app-context'
+import useTheme from '@/hooks/use-theme'
+import { useInvalidAllLastRun } from '@/service/use-workflow'
+import { cn } from '@/utils/classnames'
+import Toast from '../../base/toast'
+import {
+  useLeaderRestore,
+  useWorkflowRun,
+} from '../hooks'
+import { useHooksStore } from '../hooks-store'
 import {
   useStore,
   useWorkflowStore,
@@ -10,17 +22,7 @@ import {
 import {
   WorkflowVersion,
 } from '../types'
-import {
-  useNodesSyncDraft,
-  useWorkflowRun,
-} from '../hooks'
-import Toast from '../../base/toast'
 import RestoringTitle from './restoring-title'
-import Button from '@/app/components/base/button'
-import { useInvalidAllLastRun } from '@/service/use-workflow'
-import { useHooksStore } from '../hooks-store'
-import useTheme from '@/hooks/use-theme'
-import cn from '@/utils/classnames'
 
 export type HeaderInRestoringProps = {
   onRestoreSettled?: () => void
@@ -31,6 +33,8 @@ const HeaderInRestoring = ({
   const { t } = useTranslation()
   const { theme } = useTheme()
   const workflowStore = useWorkflowStore()
+  const userProfile = useAppContextSelector(s => s.userProfile)
+  const featuresStore = useFeaturesStore()
   const configsMap = useHooksStore(s => s.configsMap)
   const invalidAllLastRun = useInvalidAllLastRun(configsMap?.flowType, configsMap?.flowId)
   const {
@@ -42,7 +46,7 @@ const HeaderInRestoring = ({
   const {
     handleLoadBackupDraft,
   } = useWorkflowRun()
-  const { handleSyncWorkflowDraft } = useNodesSyncDraft()
+  const { requestRestore } = useLeaderRestore()
 
   const handleCancelRestore = useCallback(() => {
     handleLoadBackupDraft()
@@ -51,20 +55,42 @@ const HeaderInRestoring = ({
   }, [workflowStore, handleLoadBackupDraft, setShowWorkflowVersionHistoryPanel])
 
   const handleRestore = useCallback(() => {
+    if (!currentVersion)
+      return
+
     setShowWorkflowVersionHistoryPanel(false)
     workflowStore.setState({ isRestoring: false })
     workflowStore.setState({ backupDraft: undefined })
-    handleSyncWorkflowDraft(true, false, {
+
+    const { graph } = currentVersion
+    const features = featuresStore?.getState().features
+    const environmentVariables = currentVersion.environment_variables || []
+    const conversationVariables = currentVersion.conversation_variables || []
+
+    requestRestore({
+      versionId: currentVersion.id,
+      versionName: currentVersion.marked_name,
+      initiatorUserId: userProfile.id,
+      initiatorName: userProfile.name,
+      graphData: {
+        nodes: graph.nodes,
+        edges: graph.edges,
+        viewport: graph.viewport,
+      },
+      features,
+      environmentVariables,
+      conversationVariables,
+    }, {
       onSuccess: () => {
         Toast.notify({
           type: 'success',
-          message: t('workflow.versionHistory.action.restoreSuccess'),
+          message: t('versionHistory.action.restoreSuccess', { ns: 'workflow' }),
         })
       },
       onError: () => {
         Toast.notify({
           type: 'error',
-          message: t('workflow.versionHistory.action.restoreFailure'),
+          message: t('versionHistory.action.restoreFailure', { ns: 'workflow' }),
         })
       },
       onSettled: () => {
@@ -73,34 +99,35 @@ const HeaderInRestoring = ({
     })
     deleteAllInspectVars()
     invalidAllLastRun()
-  }, [setShowWorkflowVersionHistoryPanel, workflowStore, handleSyncWorkflowDraft, deleteAllInspectVars, invalidAllLastRun, t, onRestoreSettled])
+  }, [currentVersion, featuresStore, setShowWorkflowVersionHistoryPanel, workflowStore, requestRestore, userProfile, deleteAllInspectVars, invalidAllLastRun, t, onRestoreSettled])
 
   return (
     <>
       <div>
         <RestoringTitle />
       </div>
-      <div className=' flex items-center justify-end gap-x-2'>
+      <div className="flex items-center justify-end gap-x-2">
         <Button
           onClick={handleRestore}
           disabled={!currentVersion || currentVersion.version === WorkflowVersion.Draft}
-          variant='primary'
+          variant="primary"
           className={cn(
-            theme === 'dark' && 'rounded-lg border border-black/5 bg-white/10 backdrop-blur-sm',
+            'rounded-lg border border-transparent',
+            theme === 'dark' && 'border-black/5 bg-white/10 backdrop-blur-sm',
           )}
         >
-          {t('workflow.common.restore')}
+          {t('common.restore', { ns: 'workflow' })}
         </Button>
         <Button
           onClick={handleCancelRestore}
           className={cn(
-            'text-components-button-secondary-accent-text',
-            theme === 'dark' && 'rounded-lg border border-black/5 bg-white/10 backdrop-blur-sm',
+            'rounded-lg border border-transparent text-components-button-secondary-accent-text',
+            theme === 'dark' && 'border-black/5 bg-white/10 backdrop-blur-sm',
           )}
         >
-          <div className='flex items-center gap-x-0.5'>
-            <RiHistoryLine className='h-4 w-4' />
-            <span className='px-0.5'>{t('workflow.common.exitVersions')}</span>
+          <div className="flex items-center gap-x-0.5">
+            <RiHistoryLine className="h-4 w-4" />
+            <span className="px-0.5">{t('common.exitVersions', { ns: 'workflow' })}</span>
           </div>
         </Button>
       </div>

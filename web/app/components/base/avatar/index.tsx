@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import cn from '@/utils/classnames'
+import { cn } from '@/utils/classnames'
 
 export type AvatarProps = {
   name: string
@@ -9,6 +9,7 @@ export type AvatarProps = {
   className?: string
   textClassName?: string
   onError?: (x: boolean) => void
+  backgroundColor?: string
 }
 const Avatar = ({
   name,
@@ -17,9 +18,18 @@ const Avatar = ({
   className,
   textClassName,
   onError,
+  backgroundColor,
 }: AvatarProps) => {
-  const avatarClassName = 'shrink-0 flex items-center rounded-full bg-primary-600'
-  const style = { width: `${size}px`, height: `${size}px`, fontSize: `${size}px`, lineHeight: `${size}px` }
+  const avatarClassName = backgroundColor
+    ? 'shrink-0 flex items-center rounded-full'
+    : 'shrink-0 flex items-center rounded-full bg-primary-600'
+  const style = {
+    width: `${size}px`,
+    height: `${size}px`,
+    fontSize: `${size}px`,
+    lineHeight: `${size}px`,
+    ...(backgroundColor && !avatar ? { backgroundColor } : {}),
+  }
   const [imgError, setImgError] = useState(false)
 
   const handleError = () => {
@@ -29,20 +39,24 @@ const Avatar = ({
 
   // after uploaded, api would first return error imgs url: '.../files//file-preview/...'. Then return the right url, Which caused not show the avatar
   useEffect(() => {
-    if(avatar && imgError)
+    if (avatar && imgError)
       setImgError(false)
   }, [avatar])
 
   if (avatar && !imgError) {
     return (
-      <img
+      <span
         className={cn(avatarClassName, className)}
         style={style}
-        alt={name}
-        src={avatar}
-        onError={handleError}
-        onLoad={() => onError?.(false)}
-      />
+      >
+        <img
+          className="h-full w-full rounded-full object-cover"
+          alt={name}
+          src={avatar}
+          onError={handleError}
+          onLoad={() => onError?.(false)}
+        />
+      </span>
     )
   }
 

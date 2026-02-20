@@ -1,4 +1,3 @@
-import { get, post } from './base'
 import type {
   EndpointsResponse,
 } from '@/app/components/plugins/types'
@@ -7,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import { get, post } from './base'
 
 const NAME_SPACE = 'endpoints'
 
@@ -26,10 +26,11 @@ export const useEndpointList = (pluginID: string) => {
 export const useInvalidateEndpointList = () => {
   const queryClient = useQueryClient()
   return (pluginID: string) => {
-    queryClient.invalidateQueries(
+    return queryClient.invalidateQueries(
       {
         queryKey: [NAME_SPACE, 'list', pluginID],
-      })
+      },
+    )
   }
 }
 

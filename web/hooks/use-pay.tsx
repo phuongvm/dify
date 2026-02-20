@@ -1,14 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useTranslation } from 'react-i18next'
-import useSWR from 'swr'
-import {
-  fetchDataSourceNotionBinding,
-} from '@/service/common'
 import type { IConfirm } from '@/app/components/base/confirm'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import Confirm from '@/app/components/base/confirm'
+import { useNotionBinding } from '@/service/use-common'
 
 export type ConfirmType = Pick<IConfirm, 'type' | 'title' | 'content'>
 
@@ -21,9 +18,10 @@ export const useAnthropicCheckPay = () => {
 
   useEffect(() => {
     if (providerName === 'anthropic' && (paymentResult === 'succeeded' || paymentResult === 'cancelled')) {
+      // eslint-disable-next-line react-hooks-extra/no-direct-set-state-in-use-effect
       setConfirm({
         type: paymentResult === 'succeeded' ? 'info' : 'warning',
-        title: paymentResult === 'succeeded' ? t('common.actionMsg.paySucceeded') : t('common.actionMsg.payCancelled'),
+        title: paymentResult === 'succeeded' ? t('actionMsg.paySucceeded', { ns: 'common' }) : t('actionMsg.payCancelled', { ns: 'common' }),
       })
     }
   }, [providerName, paymentResult, t])
@@ -40,9 +38,10 @@ export const useBillingPay = () => {
 
   useEffect(() => {
     if (paymentType === 'billing' && (paymentResult === 'succeeded' || paymentResult === 'cancelled')) {
+      // eslint-disable-next-line react-hooks-extra/no-direct-set-state-in-use-effect
       setConfirm({
         type: paymentResult === 'succeeded' ? 'info' : 'warning',
-        title: paymentResult === 'succeeded' ? t('common.actionMsg.paySucceeded') : t('common.actionMsg.payCancelled'),
+        title: paymentResult === 'succeeded' ? t('actionMsg.paySucceeded', { ns: 'common' }) : t('actionMsg.payCancelled', { ns: 'common' }),
       })
     }
   }, [paymentType, paymentResult, t])
@@ -58,12 +57,7 @@ export const useCheckNotion = () => {
   const type = searchParams.get('type')
   const notionCode = searchParams.get('code')
   const notionError = searchParams.get('error')
-  const { data } = useSWR(
-    (canBinding && notionCode)
-      ? `/oauth/data-source/binding/notion?code=${notionCode}`
-      : null,
-    fetchDataSourceNotionBinding,
-  )
+  const { data } = useNotionBinding(notionCode, canBinding)
 
   useEffect(() => {
     if (data)
@@ -72,12 +66,14 @@ export const useCheckNotion = () => {
   useEffect(() => {
     if (type === 'notion') {
       if (notionError) {
+        // eslint-disable-next-line react-hooks-extra/no-direct-set-state-in-use-effect
         setConfirm({
           type: 'warning',
           title: notionError,
         })
       }
       else if (notionCode) {
+        // eslint-disable-next-line react-hooks-extra/no-direct-set-state-in-use-effect
         setCanBinding(true)
       }
     }
@@ -110,10 +106,10 @@ export const CheckModal = () => {
       onCancel={handleCancelShowPayStatusModal}
       onConfirm={handleCancelShowPayStatusModal}
       showCancel={false}
-      type={confirmInfo.type === 'info' ? 'info' : 'warning' }
+      type={confirmInfo.type === 'info' ? 'info' : 'warning'}
       title={confirmInfo.title}
       content={(confirmInfo as unknown as { desc: string }).desc || ''}
-      confirmText={(confirmInfo.type === 'info' && t('common.operation.ok')) || ''}
+      confirmText={(confirmInfo.type === 'info' && t('operation.ok', { ns: 'common' })) || ''}
     />
   )
 }

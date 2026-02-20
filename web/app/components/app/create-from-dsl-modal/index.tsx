@@ -1,34 +1,37 @@
 'use client'
 
-import type { MouseEventHandler } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { useContext } from 'use-context-selector'
-import { useTranslation } from 'react-i18next'
-import { RiCloseLine, RiCommandLine, RiCornerDownLeftLine } from '@remixicon/react'
+import type { DocPathWithoutLang } from '@/types/doc-paths'
 import { useDebounceFn, useKeyPress } from 'ahooks'
-import Uploader from './uploader'
+import { noop } from 'es-toolkit/function'
+import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useContext } from 'use-context-selector'
+import { trackEvent } from '@/app/components/base/amplitude'
 import Button from '@/app/components/base/button'
 import Input from '@/app/components/base/input'
 import Modal from '@/app/components/base/modal'
 import { ToastContext } from '@/app/components/base/toast'
-import {
-  importDSL,
-  importDSLConfirm,
-} from '@/service/apps'
+import AppsFull from '@/app/components/billing/apps-full-in-dialog'
+import { usePluginDependencies } from '@/app/components/workflow/plugin-dependency/hooks'
+import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
+import { useAppContext } from '@/context/app-context'
+import { useDocLink } from '@/context/i18n'
+import { useProviderContext } from '@/context/provider-context'
 import {
   DSLImportMode,
   DSLImportStatus,
 } from '@/models/app'
-import { useAppContext } from '@/context/app-context'
-import { useProviderContext } from '@/context/provider-context'
-import AppsFull from '@/app/components/billing/apps-full-in-dialog'
-import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
+import {
+  importAppBundle,
+  importDSL,
+  importDSLConfirm,
+} from '@/service/apps'
 import { getRedirection } from '@/utils/app-redirection'
-import cn from '@/utils/classnames'
-import { usePluginDependencies } from '@/app/components/workflow/plugin-dependency/hooks'
-import { noop } from 'lodash-es'
-import { trackEvent } from '@/app/components/base/amplitude'
+import { cn } from '@/utils/classnames'
+import ShortcutsName from '../../workflow/shortcuts-name'
+import DSLConfirmModal from './dsl-confirm-modal'
+import Uploader from './uploader'
 
 type CreateFromDSLModalProps = {
   show: boolean
@@ -44,18 +47,28 @@ export enum CreateFromDSLModalTab {
   FROM_URL = 'from-url',
 }
 
+const appManagementLocalizedPathMap = {
+  'zh-Hans': '/use-dify/workspace/app-management#应用导出和导入' as DocPathWithoutLang,
+  'zh_Hans': '/use-dify/workspace/app-management#应用导出和导入' as DocPathWithoutLang,
+  'ja-JP': '/use-dify/workspace/app-management#アプリのエクスポートとインポート' as DocPathWithoutLang,
+  'ja_JP': '/use-dify/workspace/app-management#アプリのエクスポートとインポート' as DocPathWithoutLang,
+}
+
 const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDSLModalTab.FROM_FILE, dslUrl = '', droppedFile }: CreateFromDSLModalProps) => {
   const { push } = useRouter()
   const { t } = useTranslation()
+  const docLink = useDocLink()
   const { notify } = useContext(ToastContext)
   const [currentFile, setDSLFile] = useState<File | undefined>(droppedFile)
   const [fileContent, setFileContent] = useState<string>()
   const [currentTab, setCurrentTab] = useState(activeTab)
   const [dslUrlValue, setDslUrlValue] = useState(dslUrl)
   const [showErrorModal, setShowErrorModal] = useState(false)
-  const [versions, setVersions] = useState<{ importedVersion: string; systemVersion: string }>()
+  const [versions, setVersions] = useState<{ importedVersion: string, systemVersion: string }>()
   const [importId, setImportId] = useState<string>()
   const { handleCheckPluginDependencies } = usePluginDependencies()
+
+  const isZipFile = (file?: File) => !!file && file.name.toLowerCase().endsWith('.zip')
 
   const readFile = (file: File) => {
     const reader = new FileReader()
@@ -68,9 +81,9 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
 
   const handleFile = (file?: File) => {
     setDSLFile(file)
-    if (file)
+    if (file && !isZipFile(file))
       readFile(file)
-    if (!file)
+    if (!file || isZipFile(file))
       setFileContent('')
   }
 
@@ -97,10 +110,15 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
       let response
 
       if (currentTab === CreateFromDSLModalTab.FROM_FILE) {
-        response = await importDSL({
-          mode: DSLImportMode.YAML_CONTENT,
-          yaml_content: fileContent || '',
-        })
+        if (isZipFile(currentFile)) {
+          response = await importAppBundle({ file: currentFile! })
+        }
+        else {
+          response = await importDSL({
+            mode: DSLImportMode.YAML_CONTENT,
+            yaml_content: fileContent || '',
+          })
+        }
       }
       if (currentTab === CreateFromDSLModalTab.FROM_URL) {
         response = await importDSL({
@@ -127,8 +145,8 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
 
         notify({
           type: status === DSLImportStatus.COMPLETED ? 'success' : 'warning',
-          message: t(status === DSLImportStatus.COMPLETED ? 'app.newApp.appCreated' : 'app.newApp.caution'),
-          children: status === DSLImportStatus.COMPLETED_WITH_WARNINGS && t('app.newApp.appCreateDSLWarning'),
+          message: t(status === DSLImportStatus.COMPLETED ? 'newApp.appCreated' : 'newApp.caution', { ns: 'app' }),
+          children: status === DSLImportStatus.COMPLETED_WITH_WARNINGS && t('newApp.appCreateDSLWarning', { ns: 'app' }),
         })
         localStorage.setItem(NEED_REFRESH_APP_LIST_KEY, '1')
         if (app_id)
@@ -146,12 +164,12 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
         setImportId(id)
       }
       else {
-        notify({ type: 'error', message: t('app.newApp.appCreateFailed') })
+        notify({ type: 'error', message: t('newApp.appCreateFailed', { ns: 'app' }) })
       }
     }
     // eslint-disable-next-line unused-imports/no-unused-vars
     catch (e) {
-      notify({ type: 'error', message: t('app.newApp.appCreateFailed') })
+      notify({ type: 'error', message: t('newApp.appCreateFailed', { ns: 'app' }) })
     }
     isCreatingRef.current = false
   }
@@ -168,7 +186,7 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
       onClose()
   })
 
-  const onDSLConfirm: MouseEventHandler = async () => {
+  const onDSLConfirm = async () => {
     try {
       if (!importId)
         return
@@ -186,7 +204,7 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
 
         notify({
           type: 'success',
-          message: t('app.newApp.appCreated'),
+          message: t('newApp.appCreated', { ns: 'app' }),
         })
         if (app_id)
           await handleCheckPluginDependencies(app_id)
@@ -194,23 +212,29 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
         getRedirection(isCurrentWorkspaceEditor, { id: app_id!, mode: app_mode }, push)
       }
       else if (status === DSLImportStatus.FAILED) {
-        notify({ type: 'error', message: t('app.newApp.appCreateFailed') })
+        notify({ type: 'error', message: t('newApp.appCreateFailed', { ns: 'app' }) })
       }
     }
     // eslint-disable-next-line unused-imports/no-unused-vars
     catch (e) {
-      notify({ type: 'error', message: t('app.newApp.appCreateFailed') })
+      notify({ type: 'error', message: t('newApp.appCreateFailed', { ns: 'app' }) })
     }
+  }
+
+  const handleConfirmSuccess = () => {
+    if (onSuccess)
+      onSuccess()
+    onClose()
   }
 
   const tabs = [
     {
       key: CreateFromDSLModalTab.FROM_FILE,
-      label: t('app.importFromDSLFile'),
+      label: t('importFromDSLFile', { ns: 'app' }),
     },
     {
       key: CreateFromDSLModalTab.FROM_URL,
-      label: t('app.importFromDSLUrl'),
+      label: t('importFromDSLUrl', { ns: 'app' }),
     },
   ]
 
@@ -223,26 +247,32 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
       return !dslUrlValue
     return false
   }, [isAppsFull, currentTab, currentFile, dslUrlValue])
+  const learnMoreLabel = t('importFromDSLModal.learnMore', {
+    ns: 'app',
+    defaultValue: t('newApp.learnMore', { ns: 'app' }),
+  })
 
   return (
     <>
       <Modal
-        className='w-[520px] rounded-2xl border-[0.5px] border-components-panel-border bg-components-panel-bg p-0 shadow-xl'
+        className="w-[520px] rounded-2xl border-[0.5px] border-components-panel-border bg-components-panel-bg p-0 shadow-xl"
         isShow={show}
         onClose={noop}
       >
-        <div className='title-2xl-semi-bold flex items-center justify-between pb-3 pl-6 pr-5 pt-6 text-text-primary'>
-          {t('app.importFromDSL')}
+        <div className="flex items-start justify-between pb-3 pl-6 pr-5 pt-6">
+          <div className="text-text-primary title-2xl-semi-bold">
+            {t('importFromDSL', { ns: 'app' })}
+          </div>
           <div
-            className='flex h-8 w-8 cursor-pointer items-center'
+            className="flex h-8 w-8 cursor-pointer items-center justify-center"
             onClick={() => onClose()}
           >
-            <RiCloseLine className='h-5 w-5 text-text-tertiary' />
+            <span className="i-ri-close-line h-[18px] w-[18px] text-text-tertiary" aria-hidden="true" />
           </div>
         </div>
-        <div className='system-md-semibold flex h-9 items-center space-x-6 border-b border-divider-subtle px-6 text-text-tertiary'>
-          {
-            tabs.map(tab => (
+        <div className="border-b border-divider-subtle px-6">
+          <div className="flex h-9 items-center gap-6 text-text-tertiary system-md-semibold">
+            {tabs.map(tab => (
               <div
                 key={tab.key}
                 className={cn(
@@ -252,79 +282,76 @@ const CreateFromDSLModal = ({ show, onSuccess, onClose, activeTab = CreateFromDS
                 onClick={() => setCurrentTab(tab.key)}
               >
                 {tab.label}
-                {
-                  currentTab === tab.key && (
-                    <div className='absolute bottom-0 h-[2px] w-full bg-util-colors-blue-brand-blue-brand-600'></div>
-                  )
-                }
+                {currentTab === tab.key && (
+                  <div className="absolute bottom-0 h-[2px] w-full bg-util-colors-blue-brand-blue-brand-600"></div>
+                )}
               </div>
-            ))
-          }
+            ))}
+          </div>
         </div>
-        <div className='px-6 py-4'>
-          {
-            currentTab === CreateFromDSLModalTab.FROM_FILE && (
-              <Uploader
-                className='mt-0'
-                file={currentFile}
-                updateFile={handleFile}
-              />
-            )
-          }
-          {
-            currentTab === CreateFromDSLModalTab.FROM_URL && (
-              <div>
-                <div className='system-md-semibold mb-1 text-text-secondary'>DSL URL</div>
-                <Input
-                  placeholder={t('app.importFromDSLUrlPlaceholder') || ''}
-                  value={dslUrlValue}
-                  onChange={e => setDslUrlValue(e.target.value)}
-                />
+        <div className="px-6 py-4">
+          {currentTab === CreateFromDSLModalTab.FROM_FILE && (
+            <Uploader
+              className="mt-0"
+              file={currentFile}
+              updateFile={handleFile}
+              accept=".yaml,.yml,.zip"
+              displayName={isZipFile(currentFile) ? 'ZIP' : 'YAML'}
+            />
+          )}
+          {currentTab === CreateFromDSLModalTab.FROM_URL && (
+            <div>
+              <div className="mb-1 text-text-secondary system-md-semibold">
+                {t('importFromDSLUrl', { ns: 'app' })}
               </div>
-            )
-          }
+              <Input
+                placeholder={t('importFromDSLUrlPlaceholder', { ns: 'app' }) || ''}
+                value={dslUrlValue}
+                onChange={e => setDslUrlValue(e.target.value)}
+              />
+            </div>
+          )}
         </div>
         {isAppsFull && (
-          <div className='px-6'>
-            <AppsFull className='mt-0' loc='app-create-dsl' />
+          <div className="px-6">
+            <AppsFull className="mt-0" loc="app-create-dsl" />
           </div>
         )}
-        <div className='flex justify-end px-6 py-5'>
-          <Button className='mr-2' onClick={onClose}>{t('app.newApp.Cancel')}</Button>
-          <Button
-            disabled={buttonDisabled}
-            variant="primary"
-            onClick={handleCreateApp}
-            className="gap-1"
+        <div className="flex items-center justify-between px-6 pb-6 pt-5">
+          <a
+            className="flex items-center gap-1 text-text-accent system-xs-regular"
+            href={docLink('/use-dify/workspace/app-management#app-export-and-import', appManagementLocalizedPathMap)}
+            target="_blank"
+            rel="noopener noreferrer"
           >
-            <span>{t('app.newApp.Create')}</span>
-            <div className='flex gap-0.5'>
-              <RiCommandLine size={14} className='system-kbd rounded-sm bg-components-kbd-bg-white p-0.5' />
-              <RiCornerDownLeftLine size={14} className='system-kbd rounded-sm bg-components-kbd-bg-white p-0.5' />
-            </div>
-          </Button>
-        </div>
-      </Modal>
-      <Modal
-        isShow={showErrorModal}
-        onClose={() => setShowErrorModal(false)}
-        className='w-[480px]'
-      >
-        <div className='flex flex-col items-start gap-2 self-stretch pb-4'>
-          <div className='title-2xl-semi-bold text-text-primary'>{t('app.newApp.appCreateDSLErrorTitle')}</div>
-          <div className='system-md-regular flex grow flex-col text-text-secondary'>
-            <div>{t('app.newApp.appCreateDSLErrorPart1')}</div>
-            <div>{t('app.newApp.appCreateDSLErrorPart2')}</div>
-            <br />
-            <div>{t('app.newApp.appCreateDSLErrorPart3')}<span className='system-md-medium'>{versions?.importedVersion}</span></div>
-            <div>{t('app.newApp.appCreateDSLErrorPart4')}<span className='system-md-medium'>{versions?.systemVersion}</span></div>
+            {learnMoreLabel}
+            <span className="i-ri-external-link-line h-[12px] w-[12px]" aria-hidden="true" />
+          </a>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" onClick={onClose}>
+              {t('newApp.Cancel', { ns: 'app' })}
+            </Button>
+            <Button
+              disabled={buttonDisabled}
+              variant="primary"
+              onClick={handleCreateApp}
+              className="gap-1"
+            >
+              <span>{t('newApp.import', { ns: 'app' })}</span>
+              <ShortcutsName keys={['ctrl', '↵']} bgColor="white" />
+            </Button>
           </div>
         </div>
-        <div className='flex items-start justify-end gap-2 self-stretch pt-6'>
-          <Button variant='secondary' onClick={() => setShowErrorModal(false)}>{t('app.newApp.Cancel')}</Button>
-          <Button variant='primary' destructive onClick={onDSLConfirm}>{t('app.newApp.Confirm')}</Button>
-        </div>
       </Modal>
+      {showErrorModal && (
+        <DSLConfirmModal
+          file={currentFile}
+          versions={versions}
+          onCancel={() => setShowErrorModal(false)}
+          onConfirm={onDSLConfirm}
+          onSuccess={handleConfirmSuccess}
+        />
+      )}
     </>
   )
 }

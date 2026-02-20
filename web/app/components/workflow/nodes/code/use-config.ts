@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useState } from 'react'
-import { produce } from 'immer'
-import useVarList from '../_base/hooks/use-var-list'
-import useOutputVarList from '../_base/hooks/use-output-var-list'
-import { BlockEnum, VarType } from '../../types'
 import type { Var, Variable } from '../../types'
-import { useStore } from '../../store'
 import type { CodeNodeType, OutputVar } from './types'
-import { CodeLanguage } from './types'
+import { produce } from 'immer'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useNodesReadOnly,
+} from '@/app/components/workflow/hooks'
 import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
 import {
   fetchNodeDefault,
   fetchPipelineNodeDefault,
 } from '@/service/workflow'
-import {
-  useNodesReadOnly,
-} from '@/app/components/workflow/hooks'
+import { useStore } from '../../store'
+import { BlockEnum, VarType } from '../../types'
+import useOutputVarList from '../_base/hooks/use-output-var-list'
+import useVarList from '../_base/hooks/use-var-list'
+import { CodeLanguage } from './types'
 
 const useConfig = (id: string, payload: CodeNodeType) => {
   const { nodesReadOnly: readOnly } = useNodesReadOnly()
@@ -56,17 +56,40 @@ const useConfig = (id: string, payload: CodeNodeType) => {
     setInputs,
   })
 
-  const [outputKeyOrders, setOutputKeyOrders] = useState<string[]>([])
+  const outputKeyOrdersRef = useRef<string[]>(Object.keys(payload.outputs || {}))
+  const outputKeyOrders = (() => {
+    const outputKeys = inputs.outputs ? Object.keys(inputs.outputs) : []
+    if (outputKeys.length === 0) {
+      if (outputKeyOrdersRef.current.length > 0)
+        outputKeyOrdersRef.current = []
+      return [] as string[]
+    }
+
+    const nextOutputKeyOrders = outputKeyOrdersRef.current.filter(key => outputKeys.includes(key))
+    outputKeys.forEach((key) => {
+      if (!nextOutputKeyOrders.includes(key))
+        nextOutputKeyOrders.push(key)
+    })
+    outputKeyOrdersRef.current = nextOutputKeyOrders
+    return nextOutputKeyOrders
+  })()
   const syncOutputKeyOrders = useCallback((outputs: OutputVar) => {
-    setOutputKeyOrders(Object.keys(outputs))
+    outputKeyOrdersRef.current = Object.keys(outputs)
+  }, [])
+  const handleOutputKeyOrdersChange = useCallback((newOutputKeyOrders: string[]) => {
+    outputKeyOrdersRef.current = newOutputKeyOrders
   }, [])
   useEffect(() => {
-    if (inputs.code) {
-      if (inputs.outputs && Object.keys(inputs.outputs).length > 0)
-        syncOutputKeyOrders(inputs.outputs)
+    const outputKeys = inputs.outputs ? Object.keys(inputs.outputs) : []
+    if (outputKeys.length > 0 && outputKeyOrders.length === 0)
+      syncOutputKeyOrders(inputs.outputs)
 
+    const hasExistingConfig = Boolean(inputs.code)
+      || (inputs.variables?.length ?? 0) > 0
+      || outputKeys.length > 0
+
+    if (hasExistingConfig)
       return
-    }
 
     const isReady = defaultConfig && Object.keys(defaultConfig).length > 0
     if (isReady) {
@@ -76,7 +99,7 @@ const useConfig = (id: string, payload: CodeNodeType) => {
       })
       syncOutputKeyOrders(defaultConfig.outputs)
     }
-  }, [defaultConfig])
+  }, [defaultConfig, inputs.code, inputs.outputs, inputs.variables, outputKeyOrders.length, setInputs, syncOutputKeyOrders])
 
   const handleCodeChange = useCallback((code: string) => {
     const newInputs = produce(inputs, (draft) => {
@@ -170,7 +193,7 @@ const useConfig = (id: string, payload: CodeNodeType) => {
     inputs,
     setInputs,
     outputKeyOrders,
-    onOutputKeyOrdersChange: setOutputKeyOrders,
+    onOutputKeyOrdersChange: handleOutputKeyOrdersChange,
   })
 
   const filterVar = useCallback((varPayload: Var) => {

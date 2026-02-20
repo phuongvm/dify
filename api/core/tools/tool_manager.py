@@ -189,16 +189,13 @@ class ToolManager:
                 raise ToolProviderNotFoundError(f"builtin tool {tool_name} not found")
 
             if not provider_controller.need_credentials:
-                return cast(
-                    BuiltinTool,
-                    builtin_tool.fork_tool_runtime(
-                        runtime=ToolRuntime(
-                            tenant_id=tenant_id,
-                            credentials={},
-                            invoke_from=invoke_from,
-                            tool_invoke_from=tool_invoke_from,
-                        )
-                    ),
+                return builtin_tool.fork_tool_runtime(
+                    runtime=ToolRuntime(
+                        tenant_id=tenant_id,
+                        credentials={},
+                        invoke_from=invoke_from,
+                        tool_invoke_from=tool_invoke_from,
+                    )
                 )
             builtin_provider = None
             if isinstance(provider_controller, PluginToolProviderController):
@@ -300,18 +297,15 @@ class ToolManager:
                 decrypted_credentials = refreshed_credentials.credentials
                 cache.delete()
 
-            return cast(
-                BuiltinTool,
-                builtin_tool.fork_tool_runtime(
-                    runtime=ToolRuntime(
-                        tenant_id=tenant_id,
-                        credentials=dict(decrypted_credentials),
-                        credential_type=CredentialType.of(builtin_provider.credential_type),
-                        runtime_parameters={},
-                        invoke_from=invoke_from,
-                        tool_invoke_from=tool_invoke_from,
-                    )
-                ),
+            return builtin_tool.fork_tool_runtime(
+                runtime=ToolRuntime(
+                    tenant_id=tenant_id,
+                    credentials=dict(decrypted_credentials),
+                    credential_type=CredentialType.of(builtin_provider.credential_type),
+                    runtime_parameters={},
+                    invoke_from=invoke_from,
+                    tool_invoke_from=tool_invoke_from,
+                )
             )
 
         elif provider_type == ToolProviderType.API:
@@ -634,9 +628,9 @@ class ToolManager:
             # MySQL: Use window function to achieve same result
             sql = """
                 SELECT id FROM (
-                    SELECT id, 
+                    SELECT id,
                            ROW_NUMBER() OVER (
-                               PARTITION BY tenant_id, provider 
+                               PARTITION BY tenant_id, provider
                                ORDER BY is_default DESC, created_at DESC
                            ) as rn
                     FROM tool_builtin_providers
@@ -1047,6 +1041,8 @@ class ToolManager:
                         continue
                     tool_input = ToolNodeData.ToolInput.model_validate(tool_configurations.get(parameter.name, {}))
                     if tool_input.type == "variable":
+                        if not isinstance(tool_input.value, list):
+                            raise ToolParameterError(f"Invalid variable selector for {parameter.name}")
                         variable = variable_pool.get(tool_input.value)
                         if variable is None:
                             raise ToolParameterError(f"Variable {tool_input.value} does not exist")
@@ -1056,6 +1052,11 @@ class ToolManager:
                     elif tool_input.type == "mixed":
                         segment_group = variable_pool.convert_template(str(tool_input.value))
                         parameter_value = segment_group.text
+                    elif tool_input.type == "nested_node":
+                        # Nested node type not supported in agent mode
+                        raise ToolParameterError(
+                            f"Nested node type not supported in agent for parameter '{parameter.name}'"
+                        )
                     else:
                         raise ToolParameterError(f"Unknown tool input type '{tool_input.type}'")
                     runtime_parameters[parameter.name] = parameter_value

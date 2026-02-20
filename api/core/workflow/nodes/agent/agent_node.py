@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from collections.abc import Generator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
@@ -10,11 +12,20 @@ from sqlalchemy.orm import Session
 from core.agent.entities import AgentToolEntity
 from core.agent.plugin_entities import AgentStrategyParameter
 from core.file import File, FileTransferMethod
+from core.memory.base import BaseMemory
+from core.memory.node_token_buffer_memory import NodeTokenBufferMemory
 from core.memory.token_buffer_memory import TokenBufferMemory
 from core.model_manager import ModelInstance, ModelManager
 from core.model_runtime.entities.llm_entities import LLMUsage, LLMUsageMetadata
+from core.model_runtime.entities.message_entities import (
+    AssistantPromptMessage,
+    PromptMessage,
+    ToolPromptMessage,
+    UserPromptMessage,
+)
 from core.model_runtime.entities.model_entities import AIModelEntity, ModelType
 from core.model_runtime.utils.encoders import jsonable_encoder
+from core.prompt.entities.advanced_prompt_entities import MemoryMode
 from core.provider_manager import ProviderManager
 from core.tools.entities.tool_entities import (
     ToolIdentity,
@@ -134,6 +145,9 @@ class AgentNode(Node[AgentNodeData]):
             )
             return
 
+        # Fetch memory for node memory saving
+        memory = self._fetch_memory_for_save()
+
         try:
             yield from self._transform_message(
                 messages=message_stream,
@@ -147,6 +161,7 @@ class AgentNode(Node[AgentNodeData]):
                 node_type=self.node_type,
                 node_id=self._node_id,
                 node_execution_id=self.id,
+                memory=memory,
             )
         except PluginDaemonClientSideError as e:
             transform_error = AgentMessageTransformError(
@@ -167,7 +182,7 @@ class AgentNode(Node[AgentNodeData]):
         variable_pool: VariablePool,
         node_data: AgentNodeData,
         for_log: bool = False,
-        strategy: "PluginAgentStrategy",
+        strategy: PluginAgentStrategy,
     ) -> dict[str, Any]:
         """
         Generate parameters based on the given tool parameters, variable pool, and node data.
@@ -190,32 +205,33 @@ class AgentNode(Node[AgentNodeData]):
                 result[parameter_name] = None
                 continue
             agent_input = node_data.agent_parameters[parameter_name]
-            if agent_input.type == "variable":
-                variable = variable_pool.get(agent_input.value)  # type: ignore
-                if variable is None:
-                    raise AgentVariableNotFoundError(str(agent_input.value))
-                parameter_value = variable.value
-            elif agent_input.type in {"mixed", "constant"}:
-                # variable_pool.convert_template expects a string template,
-                # but if passing a dict, convert to JSON string first before rendering
-                try:
-                    if not isinstance(agent_input.value, str):
-                        parameter_value = json.dumps(agent_input.value, ensure_ascii=False)
-                    else:
+            match agent_input.type:
+                case "variable":
+                    variable = variable_pool.get(agent_input.value)  # type: ignore
+                    if variable is None:
+                        raise AgentVariableNotFoundError(str(agent_input.value))
+                    parameter_value = variable.value
+                case "mixed" | "constant":
+                    # variable_pool.convert_template expects a string template,
+                    # but if passing a dict, convert to JSON string first before rendering
+                    try:
+                        if not isinstance(agent_input.value, str):
+                            parameter_value = json.dumps(agent_input.value, ensure_ascii=False)
+                        else:
+                            parameter_value = str(agent_input.value)
+                    except TypeError:
                         parameter_value = str(agent_input.value)
-                except TypeError:
-                    parameter_value = str(agent_input.value)
-                segment_group = variable_pool.convert_template(parameter_value)
-                parameter_value = segment_group.log if for_log else segment_group.text
-                # variable_pool.convert_template returns a string,
-                # so we need to convert it back to a dictionary
-                try:
-                    if not isinstance(agent_input.value, str):
-                        parameter_value = json.loads(parameter_value)
-                except json.JSONDecodeError:
-                    parameter_value = parameter_value
-            else:
-                raise AgentInputTypeError(agent_input.type)
+                    segment_group = variable_pool.convert_template(parameter_value)
+                    parameter_value = segment_group.log if for_log else segment_group.text
+                    # variable_pool.convert_template returns a string,
+                    # so we need to convert it back to a dictionary
+                    try:
+                        if not isinstance(agent_input.value, str):
+                            parameter_value = json.loads(parameter_value)
+                    except json.JSONDecodeError:
+                        parameter_value = parameter_value
+                case _:
+                    raise AgentInputTypeError(agent_input.type)
             value = parameter_value
             if parameter.type == "array[tools]":
                 value = cast(list[dict[str, Any]], value)
@@ -233,7 +249,18 @@ class AgentNode(Node[AgentNodeData]):
                                 0,
                             ):
                                 value_param = param.get("value", {})
-                                params[key] = value_param.get("value", "") if value_param is not None else None
+                                if value_param and value_param.get("type", "") == "variable":
+                                    variable_selector = value_param.get("value")
+                                    if not variable_selector:
+                                        raise ValueError("Variable selector is missing for a variable-type parameter.")
+
+                                    variable = variable_pool.get(variable_selector)
+                                    if variable is None:
+                                        raise AgentVariableNotFoundError(str(variable_selector))
+
+                                    params[key] = variable.value
+                                else:
+                                    params[key] = value_param.get("value", "") if value_param is not None else None
                             else:
                                 params[key] = None
                         parameters = params
@@ -328,7 +355,7 @@ class AgentNode(Node[AgentNodeData]):
     def _generate_credentials(
         self,
         parameters: dict[str, Any],
-    ) -> "InvokeCredentials":
+    ) -> InvokeCredentials:
         """
         Generate credentials based on the given agent parameters.
         """
@@ -361,12 +388,13 @@ class AgentNode(Node[AgentNodeData]):
         result: dict[str, Any] = {}
         for parameter_name in typed_node_data.agent_parameters:
             input = typed_node_data.agent_parameters[parameter_name]
-            if input.type in ["mixed", "constant"]:
-                selectors = VariableTemplateParser(str(input.value)).extract_variable_selectors()
-                for selector in selectors:
-                    result[selector.variable] = selector.value_selector
-            elif input.type == "variable":
-                result[parameter_name] = input.value
+            match input.type:
+                case "mixed" | "constant":
+                    selectors = VariableTemplateParser(str(input.value)).extract_variable_selectors()
+                    for selector in selectors:
+                        result[selector.variable] = selector.value_selector
+                case "variable":
+                    result[parameter_name] = input.value
 
         result = {node_id + "." + key: value for key, value in result.items()}
 
@@ -393,8 +421,20 @@ class AgentNode(Node[AgentNodeData]):
             icon = None
         return icon
 
-    def _fetch_memory(self, model_instance: ModelInstance) -> TokenBufferMemory | None:
-        # get conversation id
+    def _fetch_memory(self, model_instance: ModelInstance) -> BaseMemory | None:
+        """
+        Fetch memory based on configuration mode.
+
+        Returns TokenBufferMemory for conversation mode (default),
+        or NodeTokenBufferMemory for node mode (Chatflow only).
+        """
+        node_data = self.node_data
+        memory_config = node_data.memory
+
+        if not memory_config:
+            return None
+
+        # get conversation id (required for both modes in Chatflow)
         conversation_id_variable = self.graph_runtime_state.variable_pool.get(
             ["sys", SystemVariableKey.CONVERSATION_ID]
         )
@@ -402,16 +442,26 @@ class AgentNode(Node[AgentNodeData]):
             return None
         conversation_id = conversation_id_variable.value
 
-        with Session(db.engine, expire_on_commit=False) as session:
-            stmt = select(Conversation).where(Conversation.app_id == self.app_id, Conversation.id == conversation_id)
-            conversation = session.scalar(stmt)
-
-            if not conversation:
-                return None
-
-        memory = TokenBufferMemory(conversation=conversation, model_instance=model_instance)
-
-        return memory
+        # Return appropriate memory type based on mode
+        if memory_config.mode == MemoryMode.NODE:
+            # Node-level memory (Chatflow only)
+            return NodeTokenBufferMemory(
+                app_id=self.app_id,
+                conversation_id=conversation_id,
+                node_id=self._node_id,
+                tenant_id=self.tenant_id,
+                model_instance=model_instance,
+            )
+        else:
+            # Conversation-level memory (default)
+            with Session(db.engine, expire_on_commit=False) as session:
+                stmt = select(Conversation).where(
+                    Conversation.app_id == self.app_id, Conversation.id == conversation_id
+                )
+                conversation = session.scalar(stmt)
+                if not conversation:
+                    return None
+            return TokenBufferMemory(conversation=conversation, model_instance=model_instance)
 
     def _fetch_model(self, value: dict[str, Any]) -> tuple[ModelInstance, AIModelEntity | None]:
         provider_manager = ProviderManager()
@@ -442,9 +492,7 @@ class AgentNode(Node[AgentNodeData]):
                     model_schema.features.remove(feature)
         return model_schema
 
-    def _filter_mcp_type_tool(
-        self, strategy: "PluginAgentStrategy", tools: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _filter_mcp_type_tool(self, strategy: PluginAgentStrategy, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Filter MCP type tool
         :param strategy: plugin agent strategy
@@ -457,6 +505,136 @@ class AgentNode(Node[AgentNodeData]):
         else:
             return [tool for tool in tools if tool.get("type") != ToolProviderType.MCP]
 
+    def _fetch_memory_for_save(self) -> BaseMemory | None:
+        """
+        Fetch memory instance for saving node memory.
+        This is a simplified version that doesn't require model_instance.
+        """
+        from core.model_manager import ModelManager
+        from core.model_runtime.entities.model_entities import ModelType
+
+        node_data = self.node_data
+        if not node_data.memory:
+            return None
+
+        # Get conversation_id
+        conversation_id_var = self.graph_runtime_state.variable_pool.get(["sys", SystemVariableKey.CONVERSATION_ID])
+        if not isinstance(conversation_id_var, StringSegment):
+            return None
+        conversation_id = conversation_id_var.value
+
+        # Return appropriate memory type based on mode
+        if node_data.memory.mode == MemoryMode.NODE:
+            # For node memory, we need a model_instance for token counting
+            # Use a simple default model for this purpose
+            try:
+                model_instance = ModelManager().get_default_model_instance(
+                    tenant_id=self.tenant_id,
+                    model_type=ModelType.LLM,
+                )
+            except Exception:
+                return None
+
+            return NodeTokenBufferMemory(
+                app_id=self.app_id,
+                conversation_id=conversation_id,
+                node_id=self._node_id,
+                tenant_id=self.tenant_id,
+                model_instance=model_instance,
+            )
+        else:
+            # Conversation-level memory doesn't need saving here
+            return None
+
+    def _build_context(
+        self,
+        parameters_for_log: dict[str, Any],
+        user_query: str,
+        assistant_response: str,
+        agent_logs: list[AgentLogEvent],
+    ) -> list[PromptMessage]:
+        """
+        Build context from user query, tool calls, and assistant response.
+        Format: user -> assistant(with tool_calls) -> tool -> assistant
+
+        The context includes:
+        - Current user query (always present, may be empty)
+        - Assistant message with tool_calls (if tools were called)
+        - Tool results
+        - Assistant's final response
+        """
+        context_messages: list[PromptMessage] = []
+
+        # Always add user query (even if empty, to maintain conversation structure)
+        context_messages.append(UserPromptMessage(content=user_query or ""))
+
+        # Extract actual tool calls from agent logs
+        # Only include logs with label starting with "CALL " - these are real tool invocations
+        tool_calls: list[AssistantPromptMessage.ToolCall] = []
+        tool_results: list[tuple[str, str, str]] = []  # (tool_call_id, tool_name, result)
+
+        for log in agent_logs:
+            if log.status == "success" and log.label and log.label.startswith("CALL "):
+                # Extract tool name from label (format: "CALL tool_name")
+                tool_name = log.label[5:]  # Remove "CALL " prefix
+                tool_call_id = log.message_id
+
+                # Parse tool response from data
+                data = log.data or {}
+                tool_response = ""
+
+                # Try to extract the actual tool response
+                if "tool_response" in data:
+                    tool_response = data["tool_response"]
+                elif "output" in data:
+                    tool_response = data["output"]
+                elif "result" in data:
+                    tool_response = data["result"]
+
+                if isinstance(tool_response, dict):
+                    tool_response = str(tool_response)
+
+                # Get tool input for arguments
+                tool_input = data.get("tool_call_input", {}) or data.get("input", {})
+                if isinstance(tool_input, dict):
+                    import json
+
+                    tool_input_str = json.dumps(tool_input, ensure_ascii=False)
+                else:
+                    tool_input_str = str(tool_input) if tool_input else ""
+
+                if tool_response:
+                    tool_calls.append(
+                        AssistantPromptMessage.ToolCall(
+                            id=tool_call_id,
+                            type="function",
+                            function=AssistantPromptMessage.ToolCall.ToolCallFunction(
+                                name=tool_name,
+                                arguments=tool_input_str,
+                            ),
+                        )
+                    )
+                    tool_results.append((tool_call_id, tool_name, str(tool_response)))
+
+        # Add assistant message with tool_calls if there were tool calls
+        if tool_calls:
+            context_messages.append(AssistantPromptMessage(content="", tool_calls=tool_calls))
+
+            # Add tool result messages
+            for tool_call_id, tool_name, result in tool_results:
+                context_messages.append(
+                    ToolPromptMessage(
+                        content=result,
+                        tool_call_id=tool_call_id,
+                        name=tool_name,
+                    )
+                )
+
+        # Add final assistant response
+        context_messages.append(AssistantPromptMessage(content=assistant_response))
+
+        return context_messages
+
     def _transform_message(
         self,
         messages: Generator[ToolInvokeMessage, None, None],
@@ -467,6 +645,7 @@ class AgentNode(Node[AgentNodeData]):
         node_type: NodeType,
         node_id: str,
         node_execution_id: str,
+        memory: BaseMemory | None = None,
     ) -> Generator[NodeEventBase, None, None]:
         """
         Convert ToolInvokeMessages into tuple[plain_text, files]
@@ -483,7 +662,7 @@ class AgentNode(Node[AgentNodeData]):
 
         text = ""
         files: list[File] = []
-        json_list: list[dict] = []
+        json_list: list[dict | list] = []
 
         agent_logs: list[AgentLogEvent] = []
         agent_execution_metadata: Mapping[WorkflowNodeExecutionMetadataKey, Any] = {}
@@ -557,13 +736,18 @@ class AgentNode(Node[AgentNodeData]):
             elif message.type == ToolInvokeMessage.MessageType.JSON:
                 assert isinstance(message.message, ToolInvokeMessage.JsonMessage)
                 if node_type == NodeType.AGENT:
-                    msg_metadata: dict[str, Any] = message.message.json_object.pop("execution_metadata", {})
-                    llm_usage = LLMUsage.from_metadata(cast(LLMUsageMetadata, msg_metadata))
-                    agent_execution_metadata = {
-                        WorkflowNodeExecutionMetadataKey(key): value
-                        for key, value in msg_metadata.items()
-                        if key in WorkflowNodeExecutionMetadataKey.__members__.values()
-                    }
+                    if isinstance(message.message.json_object, dict):
+                        msg_metadata: dict[str, Any] = message.message.json_object.pop("execution_metadata", {})
+                        llm_usage = LLMUsage.from_metadata(cast(LLMUsageMetadata, msg_metadata))
+                        agent_execution_metadata = {
+                            WorkflowNodeExecutionMetadataKey(key): value
+                            for key, value in msg_metadata.items()
+                            if key in WorkflowNodeExecutionMetadataKey.__members__.values()
+                        }
+                    else:
+                        msg_metadata = {}
+                        llm_usage = LLMUsage.empty_usage()
+                        agent_execution_metadata = {}
                 if message.message.json_object:
                     json_list.append(message.message.json_object)
             elif message.type == ToolInvokeMessage.MessageType.LINK:
@@ -672,7 +856,7 @@ class AgentNode(Node[AgentNodeData]):
                 yield agent_log
 
         # Add agent_logs to outputs['json'] to ensure frontend can access thinking process
-        json_output: list[dict[str, Any]] = []
+        json_output: list[dict[str, Any] | list[Any]] = []
 
         # Step 1: append each agent log as its own dict.
         if agent_logs:
@@ -711,6 +895,12 @@ class AgentNode(Node[AgentNodeData]):
                 is_final=True,
             )
 
+        # Get user query from parameters for building context
+        user_query = parameters_for_log.get("query", "")
+
+        # Build context from history, user query, tool calls and assistant response
+        context = self._build_context(parameters_for_log, user_query, text, agent_logs)
+
         yield StreamCompletedEvent(
             node_run_result=NodeRunResult(
                 status=WorkflowNodeExecutionStatus.SUCCEEDED,
@@ -719,6 +909,7 @@ class AgentNode(Node[AgentNodeData]):
                     "usage": jsonable_encoder(llm_usage),
                     "files": ArrayFileSegment(value=files),
                     "json": json_output,
+                    "context": context,
                     **variables,
                 },
                 metadata={

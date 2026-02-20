@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC
 from collections.abc import Mapping, Sequence
 from enum import StrEnum, auto
@@ -17,7 +19,7 @@ class PromptMessageRole(StrEnum):
     TOOL = auto()
 
     @classmethod
-    def value_of(cls, value: str) -> "PromptMessageRole":
+    def value_of(cls, value: str) -> PromptMessageRole:
         """
         Get value of given mode.
 
@@ -88,6 +90,9 @@ class MultiModalPromptMessageContent(PromptMessageContent):
     url: str = Field(default="", description="the url of multi-modal file")
     mime_type: str = Field(default=..., description="the mime type of multi-modal file")
     filename: str = Field(default="", description="the filename of multi-modal file")
+
+    # File reference for context restoration, format: "transfer_method:related_id" or "remote:url"
+    file_ref: str | None = Field(default=None, description="Encoded file reference for restoration")
 
     @property
     def data(self):
@@ -249,10 +254,7 @@ class AssistantPromptMessage(PromptMessage):
 
         :return: True if prompt message is empty, False otherwise
         """
-        if not super().is_empty() and not self.tool_calls:
-            return False
-
-        return True
+        return super().is_empty() and not self.tool_calls
 
 
 class SystemPromptMessage(PromptMessage):
@@ -277,7 +279,5 @@ class ToolPromptMessage(PromptMessage):
 
         :return: True if prompt message is empty, False otherwise
         """
-        if not super().is_empty() and not self.tool_call_id:
-            return False
-
-        return True
+        # ToolPromptMessage is not empty if it has content OR has a tool_call_id
+        return super().is_empty() and not self.tool_call_id

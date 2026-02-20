@@ -17,15 +17,16 @@ from controllers.console.wraps import account_initialization_required, edit_perm
 from controllers.web.error import InvalidArgumentError, NotFoundError
 from core.file import helpers as file_helpers
 from core.variables.segment_group import SegmentGroup
-from core.variables.segments import ArrayFileSegment, FileSegment, Segment
+from core.variables.segments import ArrayFileSegment, ArrayPromptMessageSegment, FileSegment, Segment
 from core.variables.types import SegmentType
 from core.workflow.constants import CONVERSATION_VARIABLE_NODE_ID, SYSTEM_VARIABLE_NODE_ID
 from extensions.ext_database import db
+from factories import variable_factory
 from factories.file_factory import build_from_mapping, build_from_mappings
-from factories.variable_factory import build_segment_with_type
-from libs.login import login_required
+from libs.login import current_account_with_tenant, login_required
 from models import App, AppMode
 from models.workflow import WorkflowDraftVariable
+from services.sandbox.sandbox_service import SandboxService
 from services.workflow_draft_variable_service import WorkflowDraftVariableList, WorkflowDraftVariableService
 from services.workflow_service import WorkflowService
 
@@ -43,6 +44,16 @@ class WorkflowDraftVariableUpdatePayload(BaseModel):
     value: Any | None = Field(default=None, description="Variable value")
 
 
+class ConversationVariableUpdatePayload(BaseModel):
+    conversation_variables: list[dict[str, Any]] = Field(
+        ..., description="Conversation variables for the draft workflow"
+    )
+
+
+class EnvironmentVariableUpdatePayload(BaseModel):
+    environment_variables: list[dict[str, Any]] = Field(..., description="Environment variables for the draft workflow")
+
+
 console_ns.schema_model(
     WorkflowDraftVariableListQuery.__name__,
     WorkflowDraftVariableListQuery.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0),
@@ -51,6 +62,14 @@ console_ns.schema_model(
     WorkflowDraftVariableUpdatePayload.__name__,
     WorkflowDraftVariableUpdatePayload.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0),
 )
+console_ns.schema_model(
+    ConversationVariableUpdatePayload.__name__,
+    ConversationVariableUpdatePayload.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0),
+)
+console_ns.schema_model(
+    EnvironmentVariableUpdatePayload.__name__,
+    EnvironmentVariableUpdatePayload.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0),
+)
 
 
 def _convert_values_to_json_serializable_object(value: Segment):
@@ -58,6 +77,8 @@ def _convert_values_to_json_serializable_object(value: Segment):
         return value.value.model_dump()
     elif isinstance(value, ArrayFileSegment):
         return [i.model_dump() for i in value.value]
+    elif isinstance(value, ArrayPromptMessageSegment):
+        return value.to_object()
     elif isinstance(value, SegmentGroup):
         return [_convert_values_to_json_serializable_object(i) for i in value.value]
     else:
@@ -247,6 +268,8 @@ class WorkflowVariableCollectionApi(Resource):
     @console_ns.response(204, "Workflow variables deleted successfully")
     @_api_prerequisite
     def delete(self, app_model: App):
+        current_user, _ = current_account_with_tenant()
+        SandboxService.delete_draft_storage(app_model.tenant_id, app_model.id, current_user.id)
         draft_var_srv = WorkflowDraftVariableService(
             session=db.session(),
         )
@@ -383,7 +406,7 @@ class VariableApi(Resource):
                 if len(raw_value) > 0 and not isinstance(raw_value[0], dict):
                     raise InvalidArgumentError(description=f"expected dict for files[0], got {type(raw_value)}")
                 raw_value = build_from_mappings(mappings=raw_value, tenant_id=app_model.tenant_id)
-            new_value = build_segment_with_type(variable.value_type, raw_value)
+            new_value = variable_factory.build_segment_with_type(variable.value_type, raw_value)
         draft_var_srv.update_variable(variable, name=new_name, value=new_value)
         db.session.commit()
         return variable
@@ -476,6 +499,35 @@ class ConversationVariableCollectionApi(Resource):
         db.session.commit()
         return _get_variable_list(app_model, CONVERSATION_VARIABLE_NODE_ID)
 
+    @console_ns.expect(console_ns.models[ConversationVariableUpdatePayload.__name__])
+    @console_ns.doc("update_conversation_variables")
+    @console_ns.doc(description="Update conversation variables for workflow draft")
+    @console_ns.doc(params={"app_id": "Application ID"})
+    @console_ns.response(200, "Conversation variables updated successfully")
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @edit_permission_required
+    @get_app_model(mode=AppMode.ADVANCED_CHAT)
+    def post(self, app_model: App):
+        payload = ConversationVariableUpdatePayload.model_validate(console_ns.payload or {})
+
+        workflow_service = WorkflowService()
+
+        conversation_variables_list = payload.conversation_variables
+        conversation_variables = [
+            variable_factory.build_conversation_variable_from_mapping(obj) for obj in conversation_variables_list
+        ]
+
+        current_user, _ = current_account_with_tenant()
+        workflow_service.update_draft_workflow_conversation_variables(
+            app_model=app_model,
+            account=current_user,
+            conversation_variables=conversation_variables,
+        )
+
+        return {"result": "success"}
+
 
 @console_ns.route("/apps/<uuid:app_id>/workflows/draft/system-variables")
 class SystemVariableCollectionApi(Resource):
@@ -527,3 +579,32 @@ class EnvironmentVariableCollectionApi(Resource):
             )
 
         return {"items": env_vars_list}
+
+    @console_ns.expect(console_ns.models[EnvironmentVariableUpdatePayload.__name__])
+    @console_ns.doc("update_environment_variables")
+    @console_ns.doc(description="Update environment variables for workflow draft")
+    @console_ns.doc(params={"app_id": "Application ID"})
+    @console_ns.response(200, "Environment variables updated successfully")
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @edit_permission_required
+    @get_app_model(mode=[AppMode.ADVANCED_CHAT, AppMode.WORKFLOW])
+    def post(self, app_model: App):
+        payload = EnvironmentVariableUpdatePayload.model_validate(console_ns.payload or {})
+        current_user, _ = current_account_with_tenant()
+
+        workflow_service = WorkflowService()
+
+        environment_variables_list = payload.environment_variables
+        environment_variables = [
+            variable_factory.build_environment_variable_from_mapping(obj) for obj in environment_variables_list
+        ]
+
+        workflow_service.update_draft_workflow_environment_variables(
+            app_model=app_model,
+            account=current_user,
+            environment_variables=environment_variables,
+        )
+
+        return {"result": "success"}

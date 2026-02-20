@@ -1,6 +1,6 @@
 import { memo } from 'react'
+import { cn } from '@/utils/classnames'
 import { useVarName } from '../hooks'
-import cn from '@/utils/classnames'
 
 type VariableNameProps = {
   variables: string[]
@@ -17,7 +17,7 @@ const VariableName = ({
   return (
     <div
       className={cn(
-        'system-xs-medium truncate',
+        'truncate system-xs-medium',
         className,
       )}
       title={varName}

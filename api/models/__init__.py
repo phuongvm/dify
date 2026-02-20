@@ -9,6 +9,12 @@ from .account import (
     TenantStatus,
 )
 from .api_based_extension import APIBasedExtension, APIBasedExtensionPoint
+from .app_asset import AppAssets
+from .comment import (
+    WorkflowComment,
+    WorkflowCommentMention,
+    WorkflowCommentReply,
+)
 from .dataset import (
     AppDatasetJoin,
     Dataset,
@@ -34,7 +40,10 @@ from .enums import (
     WorkflowRunTriggeredFrom,
     WorkflowTriggerStatus,
 )
+from .execution_extra_content import ExecutionExtraContent, HumanInputContent
+from .human_input import HumanInputForm
 from .model import (
+    AccountTrialAppRecord,
     ApiRequest,
     ApiToken,
     App,
@@ -47,8 +56,10 @@ from .model import (
     DatasetRetrieverResource,
     DifySetup,
     EndUser,
+    ExporleBanner,
     IconType,
     InstalledApp,
+    LLMGenerationDetail,
     Message,
     MessageAgentThought,
     MessageAnnotation,
@@ -60,7 +71,9 @@ from .model import (
     Site,
     Tag,
     TagBinding,
+    TenantCreditPool,
     TraceAppConfig,
+    TrialApp,
     UploadFile,
 )
 from .oauth import DatasourceOauthParamConfig, DatasourceProvider
@@ -75,6 +88,7 @@ from .provider import (
     TenantDefaultModel,
     TenantPreferredModelProvider,
 )
+from .sandbox import SandboxProvider, SandboxProviderSystemConfig
 from .source import DataSourceApiKeyAuthBinding, DataSourceOauthBinding
 from .task import CeleryTask, CeleryTaskSet
 from .tools import (
@@ -99,6 +113,7 @@ from .workflow import (
     Workflow,
     WorkflowAppLog,
     WorkflowAppLogCreatedFrom,
+    WorkflowArchiveLog,
     WorkflowNodeExecutionModel,
     WorkflowNodeExecutionOffload,
     WorkflowNodeExecutionTriggeredFrom,
@@ -106,6 +121,7 @@ from .workflow import (
     WorkflowRun,
     WorkflowType,
 )
+from .workflow_features import WorkflowFeature, WorkflowFeatures
 
 __all__ = [
     "APIBasedExtension",
@@ -113,12 +129,14 @@ __all__ = [
     "Account",
     "AccountIntegrate",
     "AccountStatus",
+    "AccountTrialAppRecord",
     "ApiRequest",
     "ApiToken",
     "ApiToolProvider",
     "App",
     "AppAnnotationHitHistory",
     "AppAnnotationSetting",
+    "AppAssets",
     "AppDatasetJoin",
     "AppMCPServer",
     "AppMode",
@@ -149,11 +167,16 @@ __all__ = [
     "DocumentSegment",
     "Embedding",
     "EndUser",
+    "ExecutionExtraContent",
+    "ExporleBanner",
     "ExternalKnowledgeApis",
     "ExternalKnowledgeBindings",
+    "HumanInputContent",
+    "HumanInputForm",
     "IconType",
     "InstalledApp",
     "InvitationCode",
+    "LLMGenerationDetail",
     "LoadBalancingModelConfig",
     "Message",
     "MessageAgentThought",
@@ -170,6 +193,8 @@ __all__ = [
     "ProviderQuotaType",
     "ProviderType",
     "RecommendedApp",
+    "SandboxProvider",
+    "SandboxProviderSystemConfig",
     "SavedMessage",
     "Site",
     "Tag",
@@ -177,6 +202,7 @@ __all__ = [
     "Tenant",
     "TenantAccountJoin",
     "TenantAccountRole",
+    "TenantCreditPool",
     "TenantDefaultModel",
     "TenantPreferredModelProvider",
     "TenantStatus",
@@ -186,6 +212,7 @@ __all__ = [
     "ToolLabelBinding",
     "ToolModelInvoke",
     "TraceAppConfig",
+    "TrialApp",
     "TriggerOAuthSystemClient",
     "TriggerOAuthTenantClient",
     "TriggerSubscription",
@@ -195,6 +222,12 @@ __all__ = [
     "Workflow",
     "WorkflowAppLog",
     "WorkflowAppLogCreatedFrom",
+    "WorkflowArchiveLog",
+    "WorkflowComment",
+    "WorkflowCommentMention",
+    "WorkflowCommentReply",
+    "WorkflowFeature",
+    "WorkflowFeatures",
     "WorkflowNodeExecutionModel",
     "WorkflowNodeExecutionOffload",
     "WorkflowNodeExecutionTriggeredFrom",

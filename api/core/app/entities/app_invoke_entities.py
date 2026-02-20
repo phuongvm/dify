@@ -36,13 +36,17 @@ class InvokeFrom(StrEnum):
     # this is used for plugin trigger and webhook trigger.
     TRIGGER = "trigger"
 
+    # AGENT indicates that this invocation is from an agent.
+    AGENT = "agent"
+
     # EXPLORE indicates that this invocation is from
     # the workflow (or chatflow) explore page.
     EXPLORE = "explore"
     # DEBUGGER indicates that this invocation is from
     # the workflow (or chatflow) edit page.
     DEBUGGER = "debugger"
-    PUBLISHED = "published"
+    # PUBLISHED_PIPELINE indicates that this invocation runs a published RAG pipeline workflow.
+    PUBLISHED_PIPELINE = "published"
 
     # VALIDATION indicates that this invocation is from validation.
     VALIDATION = "validation"
@@ -131,7 +135,7 @@ class AppGenerateEntity(BaseModel):
     extras: dict[str, Any] = Field(default_factory=dict)
 
     # tracing instance
-    trace_manager: Optional["TraceQueueManager"] = None
+    trace_manager: Optional["TraceQueueManager"] = Field(default=None, exclude=True, repr=False)
 
 
 class EasyUIBasedAppGenerateEntity(AppGenerateEntity):
@@ -155,6 +159,7 @@ class ConversationAppGenerateEntity(AppGenerateEntity):
     """
 
     conversation_id: str | None = None
+    is_new_conversation: bool = False
     parent_message_id: str | None = Field(
         default=None,
         description=(

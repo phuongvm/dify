@@ -1,25 +1,34 @@
 import type { RefObject } from 'react'
-import type { InputVar, Variable } from '@/app/components/workflow/types'
-import { useCallback, useMemo, useState } from 'react'
-import useNodeCrud from '../_base/hooks/use-node-crud'
-import { type ToolNodeType, VarType } from './types'
-import type { ValueSelector } from '@/app/components/workflow/types'
+import type { ToolNodeType } from './types'
 import type { Props as FormProps } from '@/app/components/workflow/nodes/_base/components/before-run-form/form'
-import { produce } from 'immer'
+import type { InputVar, ValueSelector, Variable } from '@/app/components/workflow/types'
 import type { NodeTracing } from '@/types/workflow'
+import { produce } from 'immer'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import formatToTracingNodeList from '@/app/components/workflow/run/utils/format-log'
+import { AGENT_CONTEXT_VAR_PATTERN } from '@/app/components/workflow/utils/agent-context'
 import { useToolIcon } from '../../hooks'
+import useNodeCrud from '../_base/hooks/use-node-crud'
+import { VarType } from './types'
 
 type Params = {
-  id: string,
-  payload: ToolNodeType,
+  id: string
+  payload: ToolNodeType
   runInputData: Record<string, any>
   runInputDataRef: RefObject<Record<string, any>>
   getInputVars: (textList: string[]) => InputVar[]
   setRunInputData: (data: Record<string, any>) => void
   toVarInputs: (variables: Variable[]) => InputVar[]
   runResult: NodeTracing
+}
+type NestedNodeParam = {
+  type?: VarType
+  value?: unknown
+  nested_node_config?: {
+    extractor_node_id?: string
+    output_selector?: unknown
+  }
 }
 const useSingleRunFormParams = ({
   id,
@@ -32,7 +41,7 @@ const useSingleRunFormParams = ({
   const { inputs } = useNodeCrud<ToolNodeType>(id, payload)
 
   const hadVarParams = Object.keys(inputs.tool_parameters)
-    .filter(key => inputs.tool_parameters[key].type !== VarType.constant)
+    .filter(key => ![VarType.constant, VarType.nested_node].includes(inputs.tool_parameters[key].type))
     .map(k => inputs.tool_parameters[k])
 
   const hadVarSettings = Object.keys(inputs.tool_configurations)
@@ -61,7 +70,7 @@ const useSingleRunFormParams = ({
       Object.keys(inputs.tool_parameters).forEach((key: string) => {
         const { type, value } = inputs.tool_parameters[key]
         if (type === VarType.constant && (value === undefined || value === null)) {
-          if(!draft.tool_parameters || !draft.tool_parameters[key])
+          if (!draft.tool_parameters || !draft.tool_parameters[key])
             return
           draft[key] = value
         }
@@ -87,14 +96,68 @@ const useSingleRunFormParams = ({
 
   const toolIcon = useToolIcon(payload)
 
+  const resolveOutputSelector = (extractorNodeId: string, rawSelector?: unknown) => {
+    if (!Array.isArray(rawSelector))
+      return [] as string[]
+    if (rawSelector[0] === extractorNodeId)
+      return rawSelector.slice(1) as string[]
+    return rawSelector as string[]
+  }
+
+  const getDefaultNestedOutputSelector = (paramKey: string, value?: unknown) => {
+    if (typeof value === 'string') {
+      const matches = Array.from(value.matchAll(AGENT_CONTEXT_VAR_PATTERN))
+      if (matches.length > 0)
+        return ['structured_output', paramKey]
+    }
+    return ['result']
+  }
+
+  const collectNestedNodeSelectors = (params: Record<string, NestedNodeParam> = {}) => {
+    return Object.entries(params).flatMap(([paramKey, param]) => {
+      if (!param || param.type !== VarType.nested_node)
+        return [] as ValueSelector[]
+
+      const nestedConfig = param.nested_node_config
+      const extractorNodeId = nestedConfig?.extractor_node_id || `${id}_ext_${paramKey}`
+      const rawSelector = nestedConfig?.output_selector
+      const resolvedOutputSelector = resolveOutputSelector(extractorNodeId, rawSelector)
+      const outputSelector = resolvedOutputSelector.length > 0
+        ? resolvedOutputSelector
+        : getDefaultNestedOutputSelector(paramKey, param.value)
+
+      return outputSelector.length > 0
+        ? [[extractorNodeId, ...outputSelector]]
+        : []
+    })
+  }
+
   const getDependentVars = () => {
-    return varInputs.map((item) => {
+    const selectorList: ValueSelector[] = []
+
+    varInputs.forEach((item) => {
       // Guard against null/undefined variable to prevent app crash
       if (!item.variable || typeof item.variable !== 'string')
-        return []
+        return
+      const selector = item.variable.slice(1, -1).split('.')
+      if (selector.length > 0)
+        selectorList.push(selector)
+    })
 
-      return item.variable.slice(1, -1).split('.')
-    }).filter(arr => arr.length > 0)
+    const nestedSelectors = [
+      ...collectNestedNodeSelectors(inputs.tool_parameters as Record<string, NestedNodeParam>),
+      ...collectNestedNodeSelectors(inputs.tool_configurations as Record<string, NestedNodeParam>),
+    ]
+    selectorList.push(...nestedSelectors)
+
+    const seen = new Set<string>()
+    return selectorList.filter((selector) => {
+      const key = selector.join('.')
+      if (seen.has(key))
+        return false
+      seen.add(key)
+      return true
+    })
   }
 
   return {

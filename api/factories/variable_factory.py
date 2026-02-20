@@ -4,6 +4,14 @@ from uuid import uuid4
 
 from configs import dify_config
 from core.file import File
+from core.model_runtime.entities import PromptMessage
+from core.model_runtime.entities.message_entities import (
+    AssistantPromptMessage,
+    PromptMessageRole,
+    SystemPromptMessage,
+    ToolPromptMessage,
+    UserPromptMessage,
+)
 from core.variables.exc import VariableError
 from core.variables.segments import (
     ArrayAnySegment,
@@ -11,6 +19,7 @@ from core.variables.segments import (
     ArrayFileSegment,
     ArrayNumberSegment,
     ArrayObjectSegment,
+    ArrayPromptMessageSegment,
     ArraySegment,
     ArrayStringSegment,
     BooleanSegment,
@@ -29,6 +38,7 @@ from core.variables.variables import (
     ArrayFileVariable,
     ArrayNumberVariable,
     ArrayObjectVariable,
+    ArrayPromptMessageVariable,
     ArrayStringVariable,
     BooleanVariable,
     FileVariable,
@@ -38,7 +48,7 @@ from core.variables.variables import (
     ObjectVariable,
     SecretVariable,
     StringVariable,
-    Variable,
+    VariableBase,
 )
 from core.workflow.constants import (
     CONVERSATION_VARIABLE_NODE_ID,
@@ -61,6 +71,7 @@ SEGMENT_TO_VARIABLE_MAP = {
     ArrayFileSegment: ArrayFileVariable,
     ArrayNumberSegment: ArrayNumberVariable,
     ArrayObjectSegment: ArrayObjectVariable,
+    ArrayPromptMessageSegment: ArrayPromptMessageVariable,
     ArrayStringSegment: ArrayStringVariable,
     BooleanSegment: BooleanVariable,
     FileSegment: FileVariable,
@@ -72,25 +83,25 @@ SEGMENT_TO_VARIABLE_MAP = {
 }
 
 
-def build_conversation_variable_from_mapping(mapping: Mapping[str, Any], /) -> Variable:
+def build_conversation_variable_from_mapping(mapping: Mapping[str, Any], /) -> VariableBase:
     if not mapping.get("name"):
         raise VariableError("missing name")
     return _build_variable_from_mapping(mapping=mapping, selector=[CONVERSATION_VARIABLE_NODE_ID, mapping["name"]])
 
 
-def build_environment_variable_from_mapping(mapping: Mapping[str, Any], /) -> Variable:
+def build_environment_variable_from_mapping(mapping: Mapping[str, Any], /) -> VariableBase:
     if not mapping.get("name"):
         raise VariableError("missing name")
     return _build_variable_from_mapping(mapping=mapping, selector=[ENVIRONMENT_VARIABLE_NODE_ID, mapping["name"]])
 
 
-def build_pipeline_variable_from_mapping(mapping: Mapping[str, Any], /) -> Variable:
+def build_pipeline_variable_from_mapping(mapping: Mapping[str, Any], /) -> VariableBase:
     if not mapping.get("variable"):
         raise VariableError("missing variable")
     return mapping["variable"]
 
 
-def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequence[str]) -> Variable:
+def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequence[str]) -> VariableBase:
     """
     This factory function is used to create the environment variable or the conversation variable,
     not support the File type.
@@ -100,7 +111,7 @@ def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequen
     if (value := mapping.get("value")) is None:
         raise VariableError("missing value")
 
-    result: Variable
+    result: VariableBase
     match value_type:
         case SegmentType.STRING:
             result = StringVariable.model_validate(mapping)
@@ -134,7 +145,7 @@ def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequen
         raise VariableError(f"variable size {result.size} exceeds limit {dify_config.MAX_VARIABLE_SIZE}")
     if not result.selector:
         result = result.model_copy(update={"selector": selector})
-    return cast(Variable, result)
+    return cast(VariableBase, result)
 
 
 def build_segment(value: Any, /) -> Segment:
@@ -156,7 +167,13 @@ def build_segment(value: Any, /) -> Segment:
         return ObjectSegment(value=value)
     if isinstance(value, File):
         return FileSegment(value=value)
+    if isinstance(value, PromptMessage):
+        # Single PromptMessage should be wrapped in a list
+        return ArrayPromptMessageSegment(value=[value])
     if isinstance(value, list):
+        # Check if all items are PromptMessage
+        if value and all(isinstance(item, PromptMessage) for item in value):
+            return ArrayPromptMessageSegment(value=value)
         items = [build_segment(item) for item in value]
         types = {item.value_type for item in items}
         if all(isinstance(item, ArraySegment) for item in items):
@@ -200,7 +217,32 @@ _segment_factory: Mapping[SegmentType, type[Segment]] = {
     SegmentType.ARRAY_OBJECT: ArrayObjectSegment,
     SegmentType.ARRAY_FILE: ArrayFileSegment,
     SegmentType.ARRAY_BOOLEAN: ArrayBooleanSegment,
+    SegmentType.ARRAY_PROMPT_MESSAGE: ArrayPromptMessageSegment,
 }
+
+
+def _deserialize_prompt_message_list(value: list[dict]) -> list[PromptMessage]:
+    """
+    Deserialize a list of dicts to list[PromptMessage].
+
+    This is used when loading ARRAY_PROMPT_MESSAGE from database,
+    where PromptMessage objects are serialized as dicts.
+    """
+    result: list[PromptMessage] = []
+    for msg_dict in value:
+        role = msg_dict.get("role")
+        if role in (PromptMessageRole.USER, "user"):
+            result.append(UserPromptMessage.model_validate(msg_dict))
+        elif role in (PromptMessageRole.ASSISTANT, "assistant"):
+            result.append(AssistantPromptMessage.model_validate(msg_dict))
+        elif role in (PromptMessageRole.SYSTEM, "system"):
+            result.append(SystemPromptMessage.model_validate(msg_dict))
+        elif role in (PromptMessageRole.TOOL, "tool"):
+            result.append(ToolPromptMessage.model_validate(msg_dict))
+        else:
+            # Fallback to UserPromptMessage for unknown roles
+            result.append(UserPromptMessage.model_validate(msg_dict))
+    return result
 
 
 def build_segment_with_type(segment_type: SegmentType, value: Any) -> Segment:
@@ -274,6 +316,12 @@ def build_segment_with_type(segment_type: SegmentType, value: Any) -> Segment:
     ):
         segment_class = _segment_factory[inferred_type]
         return segment_class(value_type=inferred_type, value=value)
+    elif segment_type == SegmentType.ARRAY_PROMPT_MESSAGE and inferred_type == SegmentType.ARRAY_OBJECT:
+        # PromptMessage serializes to dict, so ARRAY_OBJECT is compatible with ARRAY_PROMPT_MESSAGE
+        # Need to deserialize dict list back to PromptMessage objects
+        deserialized_messages = _deserialize_prompt_message_list(value)
+        segment_class = _segment_factory[segment_type]
+        return segment_class(value_type=segment_type, value=deserialized_messages)
     else:
         raise TypeMismatchError(f"Type mismatch: expected {segment_type}, but got {inferred_type}, value={value}")
 
@@ -285,8 +333,8 @@ def segment_to_variable(
     id: str | None = None,
     name: str | None = None,
     description: str = "",
-) -> Variable:
-    if isinstance(segment, Variable):
+) -> VariableBase:
+    if isinstance(segment, VariableBase):
         return segment
     name = name or selector[-1]
     id = id or str(uuid4())
@@ -297,7 +345,7 @@ def segment_to_variable(
 
     variable_class = SEGMENT_TO_VARIABLE_MAP[segment_type]
     return cast(
-        Variable,
+        VariableBase,
         variable_class(
             id=id,
             name=name,

@@ -1,26 +1,28 @@
+import type { Edge, Node } from '@/app/components/workflow/types'
+import type { FileUploadConfigResponse } from '@/models/common'
+import type { FetchWorkflowDraftResponse } from '@/types/workflow'
 import {
   useCallback,
   useEffect,
   useState,
 } from 'react'
+import { useStore as useAppStore } from '@/app/components/app/store'
 import {
   useStore,
   useWorkflowStore,
 } from '@/app/components/workflow/store'
-import { useWorkflowTemplate } from './use-workflow-template'
-import { useStore as useAppStore } from '@/app/components/app/store'
+import { BlockEnum } from '@/app/components/workflow/types'
+import { STORAGE_KEYS } from '@/config/storage-keys'
+import { useWorkflowConfig } from '@/service/use-workflow'
 import {
   fetchNodesDefaultConfigs,
   fetchPublishedWorkflow,
   fetchWorkflowDraft,
   syncWorkflowDraft,
 } from '@/service/workflow'
-import type { FetchWorkflowDraftResponse } from '@/types/workflow'
-import { useWorkflowConfig } from '@/service/use-workflow'
-import type { FileUploadConfigResponse } from '@/models/common'
-import type { Edge, Node } from '@/app/components/workflow/types'
-import { BlockEnum } from '@/app/components/workflow/types'
 import { AppModeEnum } from '@/types/app'
+import { storage } from '@/utils/storage'
+import { useWorkflowTemplate } from './use-workflow-template'
 
 const hasConnectedUserInput = (nodes: Node[] = [], edges: Edge[] = []): boolean => {
   const startNodeIds = nodes
@@ -85,6 +87,11 @@ export const useWorkflowInit = () => {
             const nodesData = isAdvancedChat ? nodesTemplate : []
             const edgesData = isAdvancedChat ? edgesTemplate : []
 
+            const runtimeStorageKey = `${STORAGE_KEYS.LOCAL.WORKFLOW.SANDBOX_RUNTIME_PREFIX}${appDetail.id}`
+            const enableSandboxRuntime = storage.getBoolean(runtimeStorageKey) === true
+            if (enableSandboxRuntime)
+              storage.remove(runtimeStorageKey)
+
             syncWorkflowDraft({
               url: `/apps/${appDetail.id}/workflows/draft`,
               params: {
@@ -94,6 +101,7 @@ export const useWorkflowInit = () => {
                 },
                 features: {
                   retriever_resource: { enabled: true },
+                  sandbox: { enabled: enableSandboxRuntime },
                 },
                 environment_variables: [],
                 conversation_variables: [],
@@ -110,6 +118,7 @@ export const useWorkflowInit = () => {
 
   useEffect(() => {
     handleGetInitialWorkflowData()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleFetchPreloadData = useCallback(async () => {
@@ -150,5 +159,6 @@ export const useWorkflowInit = () => {
     data,
     isLoading: isLoading || isFileUploadConfigLoading,
     fileUploadConfigResponse,
+    reload: handleGetInitialWorkflowData,
   }
 }

@@ -1,7 +1,7 @@
-import { Fragment, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Dialog, DialogPanel, Transition, TransitionChild } from '@headlessui/react'
-import cn from '@/utils/classnames'
+import { Fragment, useCallback } from 'react'
+import { cn } from '@/utils/classnames'
 
 type DialogProps = {
   className?: string
@@ -28,7 +28,8 @@ const DialogWrapper = ({
             'data-[closed]:opacity-0',
             'data-[enter]:opacity-100 data-[enter]:duration-300 data-[enter]:ease-out',
             'data-[leave]:opacity-0 data-[leave]:duration-200 data-[leave]:ease-in',
-          )} />
+          )}
+          />
         </TransitionChild>
 
         <div className="fixed inset-0">
@@ -37,18 +38,19 @@ const DialogWrapper = ({
               <DialogPanel className={cn(
                 'relative flex h-0 w-[420px] grow flex-col overflow-hidden border-components-panel-border bg-components-panel-bg-alt p-0 text-left align-middle shadow-xl transition-all',
                 inWorkflow ? 'rounded-l-2xl border-b-[0.5px] border-l-[0.5px] border-t-[0.5px]' : 'rounded-2xl border-[0.5px]',
-                'data-[closed]:scale-95  data-[closed]:opacity-0',
+                'data-[closed]:scale-95 data-[closed]:opacity-0',
                 'data-[enter]:scale-100 data-[enter]:opacity-100 data-[enter]:duration-300 data-[enter]:ease-out',
                 'data-[leave]:scale-95 data-[leave]:opacity-0 data-[leave]:duration-200 data-[leave]:ease-in',
                 className,
-              )}>
+              )}
+              >
                 {children}
               </DialogPanel>
             </TransitionChild>
           </div>
         </div>
       </Dialog>
-    </Transition >
+    </Transition>
   )
 }
 

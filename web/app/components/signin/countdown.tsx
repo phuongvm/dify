@@ -31,11 +31,18 @@ export default function Countdown({ onResend }: CountdownProps) {
     localStorage.setItem(COUNT_DOWN_KEY, `${time}`)
   }, [time])
 
-  return <p className='system-xs-regular text-text-tertiary'>
-    <span>{t('login.checkCode.didNotReceiveCode')}</span>
-    {time > 0 && <span>{Math.round(time / 1000)}s</span>}
-    {
-      time <= 0 && <span className='system-xs-medium cursor-pointer text-text-accent-secondary' onClick={resend}>{t('login.checkCode.resend')}</span>
-    }
-  </p>
+  return (
+    <p className="text-text-tertiary system-xs-regular">
+      <span>{t('checkCode.didNotReceiveCode', { ns: 'login' })}</span>
+      {time > 0 && (
+        <span>
+          {Math.round(time / 1000)}
+          s
+        </span>
+      )}
+      {
+        time <= 0 && <span className="cursor-pointer text-text-accent-secondary system-xs-medium" onClick={resend}>{t('checkCode.resend', { ns: 'login' })}</span>
+      }
+    </p>
+  )
 }

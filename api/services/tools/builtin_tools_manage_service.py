@@ -12,7 +12,6 @@ from constants import HIDDEN_VALUE, UNKNOWN_VALUE
 from core.helper.name_generator import generate_incremental_name
 from core.helper.position_helper import is_filtered
 from core.helper.provider_cache import NoOpProviderCredentialCache, ToolProviderCredentialsCache
-from core.helper.tool_provider_cache import ToolProviderListCache
 from core.plugin.entities.plugin_daemon import CredentialType
 from core.tools.builtin_tool.provider import BuiltinToolProviderController
 from core.tools.builtin_tool.providers._positions import BuiltinToolProviderSort
@@ -27,7 +26,7 @@ from core.tools.plugin_tool.provider import PluginToolProviderController
 from core.tools.tool_label_manager import ToolLabelManager
 from core.tools.tool_manager import ToolManager
 from core.tools.utils.encryption import create_provider_encrypter
-from core.tools.utils.system_oauth_encryption import decrypt_system_oauth_params
+from core.tools.utils.system_encryption import decrypt_system_params
 from extensions.ext_database import db
 from extensions.ext_redis import redis_client
 from models.provider_ids import ToolProviderID
@@ -205,9 +204,6 @@ class BuiltinToolManageService:
                     db_provider.name = name
 
                 session.commit()
-
-                # Invalidate tool providers cache
-                ToolProviderListCache.invalidate_cache(tenant_id)
             except Exception as e:
                 session.rollback()
                 raise ValueError(str(e))
@@ -286,12 +282,10 @@ class BuiltinToolManageService:
 
                     session.add(db_provider)
                     session.commit()
-
-                    # Invalidate tool providers cache
-                    ToolProviderListCache.invalidate_cache(tenant_id)
             except Exception as e:
                 session.rollback()
                 raise ValueError(str(e))
+
         return {"result": "success"}
 
     @staticmethod
@@ -409,9 +403,6 @@ class BuiltinToolManageService:
             )
             cache.delete()
 
-            # Invalidate tool providers cache
-            ToolProviderListCache.invalidate_cache(tenant_id)
-
         return {"result": "success"}
 
     @staticmethod
@@ -434,8 +425,6 @@ class BuiltinToolManageService:
             target_provider.is_default = True
             session.commit()
 
-            # Invalidate tool providers cache
-            ToolProviderListCache.invalidate_cache(tenant_id)
         return {"result": "success"}
 
     @staticmethod
@@ -513,7 +502,7 @@ class BuiltinToolManageService:
             )
             if system_client:
                 try:
-                    oauth_params = decrypt_system_oauth_params(system_client.encrypted_oauth_params)
+                    oauth_params = decrypt_system_params(system_client.encrypted_oauth_params)
                 except Exception as e:
                     raise ValueError(f"Error decrypting system oauth params: {e}")
 

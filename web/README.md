@@ -8,8 +8,18 @@ This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next
 
 Before starting the web frontend service, please make sure the following environment is ready.
 
-- [Node.js](https://nodejs.org) >= v22.11.x
-- [pnpm](https://pnpm.io) v10.x
+- [Node.js](https://nodejs.org)
+- [pnpm](https://pnpm.io)
+
+> [!TIP]
+> It is recommended to install and enable Corepack to manage package manager versions automatically:
+>
+> ```bash
+> npm install -g corepack
+> corepack enable
+> ```
+>
+> Learn more: [Corepack](https://github.com/nodejs/corepack#readme)
 
 First, install the dependencies:
 
@@ -33,6 +43,8 @@ NEXT_PUBLIC_EDITION=SELF_HOSTED
 # example: http://cloud.dify.ai/console/api
 NEXT_PUBLIC_API_PREFIX=http://localhost:5001/console/api
 NEXT_PUBLIC_COOKIE_DOMAIN=
+# WebSocket server URL.
+NEXT_PUBLIC_SOCKET_URL=ws://localhost:5001
 # The URL for Web APP, refers to the Web App base URL of WEB service if web app domain is different from
 # console or api domain.
 # example: http://udify.app/api
@@ -97,16 +109,18 @@ Open [http://localhost:6006](http://localhost:6006) with your browser to see the
 
 If your IDE is VSCode, rename `web/.vscode/settings.example.json` to `web/.vscode/settings.json` for lint code setting.
 
+Then follow the [Lint Documentation](./docs/lint.md) to lint the code.
+
 ## Test
 
-We use [Jest](https://jestjs.io/) and [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/) for Unit Testing.
+We use [Vitest](https://vitest.dev/) and [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/) for Unit Testing.
 
 **📖 Complete Testing Guide**: See [web/testing/testing.md](./testing/testing.md) for detailed testing specifications, best practices, and examples.
 
 Run test:
 
 ```bash
-pnpm run test
+pnpm test
 ```
 
 ### Example Code
@@ -128,7 +142,7 @@ This will help you determine the testing strategy. See [web/testing/testing.md](
 
 ## Documentation
 
-Visit <https://docs.dify.ai/getting-started/readme> to view the full documentation.
+Visit <https://docs.dify.ai> to view the full documentation.
 
 ## Community
 

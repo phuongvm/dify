@@ -1,21 +1,23 @@
+import type { ReactNode } from 'react'
+import type { HeaderProps } from '@/app/components/workflow/header'
 import {
   memo,
   useCallback,
   useMemo,
 } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import type { HeaderProps } from '@/app/components/workflow/header'
-import Header from '@/app/components/workflow/header'
 import { useStore as useAppStore } from '@/app/components/app/store'
-import {
-  fetchWorkflowRunHistory,
-} from '@/service/workflow'
-import ChatVariableTrigger from './chat-variable-trigger'
-import FeaturesTrigger from './features-trigger'
+import Header from '@/app/components/workflow/header'
 import { useResetWorkflowVersionHistory } from '@/service/use-workflow'
 import { useIsChatMode } from '../../hooks'
+import ChatVariableTrigger from './chat-variable-trigger'
+import FeaturesTrigger from './features-trigger'
 
-const WorkflowHeader = () => {
+type WorkflowHeaderProps = {
+  leftSlot?: ReactNode
+}
+
+const WorkflowHeader = ({ leftSlot }: WorkflowHeaderProps) => {
   const { appDetail, setCurrentLogItem, setShowMessageLogModal } = useAppStore(useShallow(state => ({
     appDetail: state.appDetail,
     setCurrentLogItem: state.setCurrentLogItem,
@@ -33,7 +35,6 @@ const WorkflowHeader = () => {
     return {
       onClearLogAndMessageModal: handleClearLogAndMessageModal,
       historyUrl: isChatMode ? `/apps/${appDetail!.id}/advanced-chat/workflow-runs` : `/apps/${appDetail!.id}/workflow-runs`,
-      historyFetcher: fetchWorkflowRunHistory,
     }
   }, [appDetail, isChatMode, handleClearLogAndMessageModal])
 
@@ -41,6 +42,7 @@ const WorkflowHeader = () => {
     return {
       normal: {
         components: {
+          left: leftSlot,
           middle: <FeaturesTrigger />,
           chatVariableTrigger: <ChatVariableTrigger />,
         },
@@ -57,7 +59,7 @@ const WorkflowHeader = () => {
         onRestoreSettled: resetWorkflowVersionHistory,
       },
     }
-  }, [resetWorkflowVersionHistory, isChatMode, viewHistoryProps])
+  }, [leftSlot, resetWorkflowVersionHistory, isChatMode, viewHistoryProps])
   return (
     <Header {...headerProps} />
   )

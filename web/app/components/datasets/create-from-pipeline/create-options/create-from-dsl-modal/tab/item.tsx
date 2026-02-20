@@ -1,5 +1,5 @@
-import React from 'react'
-import cn from '@/utils/classnames'
+import * as React from 'react'
+import { cn } from '@/utils/classnames'
 
 type ItemProps = {
   isActive: boolean
@@ -15,7 +15,7 @@ const Item = ({
   return (
     <div
       className={cn(
-        'system-md-semibold relative flex h-full cursor-pointer items-center text-text-tertiary',
+        'relative flex h-full cursor-pointer items-center text-text-tertiary system-md-semibold',
         isActive && 'text-text-primary',
       )}
       onClick={onClick}
@@ -23,7 +23,7 @@ const Item = ({
       {label}
       {
         isActive && (
-          <div className='absolute bottom-0 h-0.5 w-full bg-util-colors-blue-brand-blue-brand-600' />
+          <div className="absolute bottom-0 h-0.5 w-full bg-util-colors-blue-brand-blue-brand-600" />
         )
       }
     </div>

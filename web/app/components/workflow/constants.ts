@@ -1,5 +1,6 @@
 import type { Var } from './types'
 import { BlockEnum, VarType } from './types'
+
 export const MAX_ITERATION_PARALLEL_NUM = 10
 export const MIN_ITERATION_PARALLEL_NUM = 1
 export const DEFAULT_ITER_TIMES = 1
@@ -42,16 +43,18 @@ export const isInWorkflowPage = () => {
 export const getGlobalVars = (isChatMode: boolean): Var[] => {
   const isInWorkflow = isInWorkflowPage()
   const vars: Var[] = [
-    ...(isChatMode ? [
-      {
-        variable: 'sys.dialogue_count',
-        type: VarType.number,
-      },
-      {
-        variable: 'sys.conversation_id',
-        type: VarType.string,
-      },
-    ] : []),
+    ...(isChatMode
+      ? [
+          {
+            variable: 'sys.dialogue_count',
+            type: VarType.number,
+          },
+          {
+            variable: 'sys.conversation_id',
+            type: VarType.string,
+          },
+        ]
+      : []),
     {
       variable: 'sys.user_id',
       type: VarType.string,
@@ -68,12 +71,14 @@ export const getGlobalVars = (isChatMode: boolean): Var[] => {
       variable: 'sys.workflow_run_id',
       type: VarType.string,
     },
-    ...((isInWorkflow && !isChatMode) ? [
-      {
-        variable: 'sys.timestamp',
-        type: VarType.number,
-      },
-    ] : []),
+    ...((isInWorkflow && !isChatMode)
+      ? [
+          {
+            variable: 'sys.timestamp',
+            type: VarType.number,
+          },
+        ]
+      : []),
   ]
   return vars
 }
@@ -81,6 +86,7 @@ export const getGlobalVars = (isChatMode: boolean): Var[] => {
 export const VAR_SHOW_NAME_MAP: Record<string, string> = {
   'sys.query': 'query',
   'sys.files': 'files',
+  'context': 'chat history',
 }
 
 export const RETRIEVAL_OUTPUT_STRUCT = `{
@@ -104,14 +110,36 @@ export const RETRIEVAL_OUTPUT_STRUCT = `{
 }`
 
 export const SUPPORT_OUTPUT_VARS_NODE = [
-  BlockEnum.Start, BlockEnum.TriggerWebhook, BlockEnum.TriggerPlugin, BlockEnum.LLM, BlockEnum.KnowledgeRetrieval, BlockEnum.Code, BlockEnum.TemplateTransform,
-  BlockEnum.HttpRequest, BlockEnum.Tool, BlockEnum.VariableAssigner, BlockEnum.VariableAggregator, BlockEnum.QuestionClassifier,
-  BlockEnum.ParameterExtractor, BlockEnum.Iteration, BlockEnum.Loop,
-  BlockEnum.DocExtractor, BlockEnum.ListFilter,
-  BlockEnum.Agent, BlockEnum.DataSource,
+  BlockEnum.Start,
+  BlockEnum.TriggerWebhook,
+  BlockEnum.TriggerPlugin,
+  BlockEnum.LLM,
+  BlockEnum.KnowledgeRetrieval,
+  BlockEnum.Code,
+  BlockEnum.TemplateTransform,
+  BlockEnum.Command,
+  BlockEnum.FileUpload,
+  BlockEnum.HttpRequest,
+  BlockEnum.Tool,
+  BlockEnum.VariableAssigner,
+  BlockEnum.VariableAggregator,
+  BlockEnum.QuestionClassifier,
+  BlockEnum.ParameterExtractor,
+  BlockEnum.Iteration,
+  BlockEnum.Loop,
+  BlockEnum.DocExtractor,
+  BlockEnum.ListFilter,
+  BlockEnum.Agent,
+  BlockEnum.DataSource,
+  BlockEnum.HumanInput,
 ]
 
 export const AGENT_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: 'context',
+    type: VarType.arrayObject,
+    schemaType: 'List[promptMessage]',
+  },
   {
     variable: 'usage',
     type: VarType.object,
@@ -120,8 +148,31 @@ export const AGENT_OUTPUT_STRUCT: Var[] = [
 
 export const LLM_OUTPUT_STRUCT: Var[] = [
   {
+    variable: 'generation',
+    type: VarType.object,
+    children: [
+      {
+        variable: 'content',
+        type: VarType.string,
+      },
+      {
+        variable: 'reasoning_content',
+        type: VarType.arrayString,
+      },
+      {
+        variable: 'tool_calls',
+        type: VarType.arrayObject,
+      },
+    ],
+  },
+  {
     variable: 'text',
     type: VarType.string,
+  },
+  {
+    variable: 'context',
+    type: VarType.arrayObject,
+    schemaType: 'List[promptMessage]',
   },
   {
     variable: 'reasoning_content',
@@ -143,6 +194,36 @@ export const KNOWLEDGE_RETRIEVAL_OUTPUT_STRUCT: Var[] = [
 export const TEMPLATE_TRANSFORM_OUTPUT_STRUCT: Var[] = [
   {
     variable: 'output',
+    type: VarType.string,
+  },
+]
+
+export const COMMAND_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: 'stdout',
+    type: VarType.string,
+  },
+  {
+    variable: 'stderr',
+    type: VarType.string,
+  },
+  {
+    variable: 'exit_code',
+    type: VarType.number,
+  },
+  {
+    variable: 'pid',
+    type: VarType.string,
+  },
+]
+
+export const FILE_UPLOAD_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: 'sandbox_path',
+    type: VarType.string,
+  },
+  {
+    variable: 'file_name',
     type: VarType.string,
   },
 ]
@@ -189,6 +270,17 @@ export const TOOL_OUTPUT_STRUCT: Var[] = [
   {
     variable: 'json',
     type: VarType.arrayObject,
+  },
+]
+
+export const HUMAN_INPUT_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: '__action_id',
+    type: VarType.string,
+  },
+  {
+    variable: '__rendered_content',
+    type: VarType.string,
   },
 ]
 

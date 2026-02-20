@@ -7,7 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.model_runtime.entities.llm_entities import LLMResult, LLMResultChunk
 from core.rag.entities.citation_metadata import RetrievalSourceMetadata
-from core.workflow.entities import AgentNodeStrategyInit
+from core.workflow.entities import AgentNodeStrategyInit, ToolCall, ToolResult
+from core.workflow.entities.pause_reason import PauseReason
+from core.workflow.entities.workflow_start_reason import WorkflowStartReason
 from core.workflow.enums import WorkflowNodeExecutionMetadataKey
 from core.workflow.nodes import NodeType
 
@@ -46,6 +48,9 @@ class QueueEvent(StrEnum):
     PING = "ping"
     STOP = "stop"
     RETRY = "retry"
+    PAUSE = "pause"
+    HUMAN_INPUT_FORM_FILLED = "human_input_form_filled"
+    HUMAN_INPUT_FORM_TIMEOUT = "human_input_form_timeout"
 
 
 class AppQueueEvent(BaseModel):
@@ -177,6 +182,17 @@ class QueueLoopCompletedEvent(AppQueueEvent):
     error: str | None = None
 
 
+class ChunkType(StrEnum):
+    """Stream chunk type for LLM-related events."""
+
+    TEXT = "text"  # Normal text streaming
+    TOOL_CALL = "tool_call"  # Tool call arguments streaming
+    TOOL_RESULT = "tool_result"  # Tool execution result
+    THOUGHT = "thought"  # Agent thinking process (ReAct)
+    THOUGHT_START = "thought_start"  # Agent thought start
+    THOUGHT_END = "thought_end"  # Agent thought end
+
+
 class QueueTextChunkEvent(AppQueueEvent):
     """
     QueueTextChunkEvent entity
@@ -190,6 +206,18 @@ class QueueTextChunkEvent(AppQueueEvent):
     """iteration id if node is in iteration"""
     in_loop_id: str | None = None
     """loop id if node is in loop"""
+    in_parent_node_id: str | None = None
+    """parent node id if this is an extractor node event"""
+
+    # Extended fields for Agent/Tool streaming
+    chunk_type: ChunkType = ChunkType.TEXT
+    """type of the chunk"""
+
+    # Tool streaming payloads
+    tool_call: ToolCall | None = None
+    """structured tool call info"""
+    tool_result: ToolResult | None = None
+    """structured tool result info"""
 
 
 class QueueAgentMessageEvent(AppQueueEvent):
@@ -229,6 +257,8 @@ class QueueRetrieverResourcesEvent(AppQueueEvent):
     """iteration id if node is in iteration"""
     in_loop_id: str | None = None
     """loop id if node is in loop"""
+    in_parent_node_id: str | None = None
+    """parent node id if this is an extractor node event"""
 
 
 class QueueAnnotationReplyEvent(AppQueueEvent):
@@ -261,6 +291,8 @@ class QueueWorkflowStartedEvent(AppQueueEvent):
     """QueueWorkflowStartedEvent entity."""
 
     event: QueueEvent = QueueEvent.WORKFLOW_STARTED
+    # Always present; mirrors GraphRunStartedEvent.reason for downstream consumers.
+    reason: WorkflowStartReason = WorkflowStartReason.INITIAL
 
 
 class QueueWorkflowSucceededEvent(AppQueueEvent):
@@ -306,6 +338,8 @@ class QueueNodeStartedEvent(AppQueueEvent):
     node_run_index: int = 1  # FIXME(-LAN-): may not used
     in_iteration_id: str | None = None
     in_loop_id: str | None = None
+    in_parent_node_id: str | None = None
+    """parent node id if this is an extractor node event"""
     start_at: datetime
     agent_strategy: AgentNodeStrategyInit | None = None
 
@@ -328,6 +362,8 @@ class QueueNodeSucceededEvent(AppQueueEvent):
     """iteration id if node is in iteration"""
     in_loop_id: str | None = None
     """loop id if node is in loop"""
+    in_parent_node_id: str | None = None
+    """parent node id if this is an extractor node event"""
     start_at: datetime
 
     inputs: Mapping[str, object] = Field(default_factory=dict)
@@ -383,6 +419,8 @@ class QueueNodeExceptionEvent(AppQueueEvent):
     """iteration id if node is in iteration"""
     in_loop_id: str | None = None
     """loop id if node is in loop"""
+    in_parent_node_id: str | None = None
+    """parent node id if this is an extractor node event"""
     start_at: datetime
 
     inputs: Mapping[str, object] = Field(default_factory=dict)
@@ -407,6 +445,8 @@ class QueueNodeFailedEvent(AppQueueEvent):
     """iteration id if node is in iteration"""
     in_loop_id: str | None = None
     """loop id if node is in loop"""
+    in_parent_node_id: str | None = None
+    """parent node id if this is an extractor node event"""
     start_at: datetime
 
     inputs: Mapping[str, object] = Field(default_factory=dict)
@@ -484,6 +524,35 @@ class QueueStopEvent(AppQueueEvent):
         return reason_mapping.get(self.stopped_by, "Stopped by unknown reason.")
 
 
+class QueueHumanInputFormFilledEvent(AppQueueEvent):
+    """
+    QueueHumanInputFormFilledEvent entity
+    """
+
+    event: QueueEvent = QueueEvent.HUMAN_INPUT_FORM_FILLED
+
+    node_execution_id: str
+    node_id: str
+    node_type: NodeType
+    node_title: str
+    rendered_content: str
+    action_id: str
+    action_text: str
+
+
+class QueueHumanInputFormTimeoutEvent(AppQueueEvent):
+    """
+    QueueHumanInputFormTimeoutEvent entity
+    """
+
+    event: QueueEvent = QueueEvent.HUMAN_INPUT_FORM_TIMEOUT
+
+    node_id: str
+    node_type: NodeType
+    node_title: str
+    expiration_time: datetime
+
+
 class QueueMessage(BaseModel):
     """
     QueueMessage abstract entity
@@ -509,3 +578,14 @@ class WorkflowQueueMessage(QueueMessage):
     """
 
     pass
+
+
+class QueueWorkflowPausedEvent(AppQueueEvent):
+    """
+    QueueWorkflowPausedEvent entity
+    """
+
+    event: QueueEvent = QueueEvent.PAUSE
+    reasons: Sequence[PauseReason] = Field(default_factory=list)
+    outputs: Mapping[str, object] = Field(default_factory=dict)
+    paused_nodes: Sequence[str] = Field(default_factory=list)

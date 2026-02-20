@@ -1,11 +1,10 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
-import type { ToolWithProvider } from '../../../types'
-import Tool from '../tool'
-import type { BlockEnum } from '../../../types'
-import { ViewType } from '../../view-type-select'
+import type { BlockEnum, ToolWithProvider } from '../../../types'
 import type { ToolDefaultValue, ToolValue } from '../../types'
+import * as React from 'react'
+import { ViewType } from '../../view-type-select'
+import Tool from '../tool'
 
 type Props = {
   groupName: string
@@ -15,7 +14,7 @@ type Props = {
   canNotSelectMultiple?: boolean
   onSelectMultiple?: (type: BlockEnum, tools: ToolDefaultValue[]) => void
   selectedTools?: ToolValue[]
-  canChooseMCPTool?: boolean
+  hideSelectedInfo?: boolean
 }
 
 const Item: FC<Props> = ({
@@ -26,11 +25,11 @@ const Item: FC<Props> = ({
   canNotSelectMultiple,
   onSelectMultiple,
   selectedTools,
-  canChooseMCPTool,
+  hideSelectedInfo,
 }) => {
   return (
     <div>
-      <div className='flex h-[22px] items-center px-3 text-xs font-medium text-text-tertiary'>
+      <div className="flex h-[22px] items-center px-3 text-xs font-medium text-text-tertiary">
         {groupName}
       </div>
       <div>
@@ -44,7 +43,7 @@ const Item: FC<Props> = ({
             canNotSelectMultiple={canNotSelectMultiple}
             onSelectMultiple={onSelectMultiple}
             selectedTools={selectedTools}
-            canChooseMCPTool={canChooseMCPTool}
+            hideSelectedInfo={hideSelectedInfo}
           />
         ))}
       </div>

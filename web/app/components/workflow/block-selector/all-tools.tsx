@@ -3,34 +3,35 @@ import type {
   RefObject,
   SetStateAction,
 } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import type { Plugin } from '../../plugins/types'
 import type {
   BlockEnum,
   ToolWithProvider,
 } from '../types'
 import type { ToolDefaultValue, ToolValue } from './types'
-import { ToolTypeEnum } from './types'
-import Tools from './tools'
-import { useToolTabs } from './hooks'
-import ViewTypeSelect, { ViewType } from './view-type-select'
-import cn from '@/utils/classnames'
-import Button from '@/app/components/base/button'
-import { SearchMenu } from '@/app/components/base/icons/src/vender/line/general'
-import type { ListRef } from '@/app/components/workflow/block-selector/market-place-plugin/list'
-import PluginList, { type ListProps } from '@/app/components/workflow/block-selector/market-place-plugin/list'
-import type { Plugin } from '../../plugins/types'
-import { PluginCategoryEnum } from '../../plugins/types'
-import { useMarketplacePlugins } from '../../plugins/marketplace/hooks'
-import { useGlobalPublicStore } from '@/context/global-public-context'
-import RAGToolRecommendations from './rag-tool-recommendations'
-import FeaturedTools from './featured-tools'
-import Link from 'next/link'
-import Divider from '@/app/components/base/divider'
-import { RiArrowRightUpLine } from '@remixicon/react'
-import { getMarketplaceUrl } from '@/utils/var'
-import { useGetLanguage } from '@/context/i18n'
+import type { ListProps, ListRef } from '@/app/components/workflow/block-selector/market-place-plugin/list'
 import type { OnSelectBlock } from '@/app/components/workflow/types'
+import { RiArrowRightUpLine } from '@remixicon/react'
+import { useEventListener } from 'ahooks'
+import Link from 'next/link'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import Button from '@/app/components/base/button'
+import Divider from '@/app/components/base/divider'
+import { SearchMenu } from '@/app/components/base/icons/src/vender/line/general'
+import PluginList from '@/app/components/workflow/block-selector/market-place-plugin/list'
+import { useGlobalPublicStore } from '@/context/global-public-context'
+import { useGetLanguage } from '@/context/i18n'
+import { cn } from '@/utils/classnames'
+import { getMarketplaceUrl } from '@/utils/var'
+import { useMarketplacePlugins } from '../../plugins/marketplace/hooks'
+import { PluginCategoryEnum } from '../../plugins/types'
+import FeaturedTools from './featured-tools'
+import { useToolTabs } from './hooks'
+import RAGToolRecommendations from './rag-tool-recommendations'
+import Tools from './tools'
+import { ToolTypeEnum } from './types'
+import ViewTypeSelect, { ViewType } from './view-type-select'
 
 const marketplaceFooterClassName = 'system-sm-medium z-10 flex h-8 flex-none cursor-pointer items-center rounded-b-lg border-[0.5px] border-t border-components-panel-border bg-components-panel-bg-blur px-4 py-1 text-text-accent-light-mode-only shadow-lg'
 
@@ -47,13 +48,16 @@ type AllToolsProps = {
   canNotSelectMultiple?: boolean
   onSelectMultiple?: (type: BlockEnum, tools: ToolDefaultValue[]) => void
   selectedTools?: ToolValue[]
-  canChooseMCPTool?: boolean
   onTagsChange?: Dispatch<SetStateAction<string[]>>
   isInRAGPipeline?: boolean
   featuredPlugins?: Plugin[]
   featuredLoading?: boolean
   showFeatured?: boolean
   onFeaturedInstallSuccess?: () => Promise<void> | void
+  hideFeaturedTool?: boolean
+  hideSelectedInfo?: boolean
+  enableKeyboardNavigation?: boolean
+  onClose?: () => void
 }
 
 const DEFAULT_TAGS: AllToolsProps['tags'] = []
@@ -71,19 +75,25 @@ const AllTools = ({
   customTools,
   mcpTools = [],
   selectedTools,
-  canChooseMCPTool,
   onTagsChange,
   isInRAGPipeline = false,
   featuredPlugins = [],
   featuredLoading = false,
   showFeatured = false,
   onFeaturedInstallSuccess,
+  hideFeaturedTool = false,
+  hideSelectedInfo = false,
+  enableKeyboardNavigation = false,
+  onClose,
 }: AllToolsProps) => {
   const { t } = useTranslation()
   const language = useGetLanguage()
   const tabs = useToolTabs()
   const [activeTab, setActiveTab] = useState(ToolTypeEnum.All)
   const [activeView, setActiveView] = useState<ViewType>(ViewType.flat)
+  const activeIndexRef = useRef(-1)
+  const itemElementsRef = useRef<HTMLElement[]>([])
+  const highlightedElementRef = useRef<HTMLElement | null>(null)
   const trimmedSearchText = searchText.trim()
   const hasSearchText = trimmedSearchText.length > 0
   const hasTags = tags.length > 0
@@ -172,7 +182,8 @@ const AllTools = ({
   const { enable_marketplace } = useGlobalPublicStore(s => s.systemFeatures)
 
   useEffect(() => {
-    if (!enable_marketplace) return
+    if (!enable_marketplace)
+      return
     if (hasFilter) {
       fetchPlugins({
         query: searchText,
@@ -185,6 +196,34 @@ const AllTools = ({
   const pluginRef = useRef<ListRef>(null)
   const wrapElemRef = useRef<HTMLDivElement>(null)
   const isSupportGroupView = [ToolTypeEnum.All, ToolTypeEnum.BuiltIn].includes(activeTab)
+  const refreshKeyboardItems = useCallback(() => {
+    if (!wrapElemRef.current) {
+      itemElementsRef.current = []
+      return []
+    }
+    const items = Array.from(wrapElemRef.current.querySelectorAll<HTMLElement>('[data-tool-picker-item="true"]'))
+    itemElementsRef.current = items
+    return items
+  }, [])
+  const clearHighlight = useCallback(() => {
+    if (highlightedElementRef.current)
+      highlightedElementRef.current.classList.remove('bg-state-base-hover')
+    highlightedElementRef.current = null
+    activeIndexRef.current = -1
+  }, [])
+  const applyHighlight = useCallback((index: number, items: HTMLElement[]) => {
+    if (highlightedElementRef.current)
+      highlightedElementRef.current.classList.remove('bg-state-base-hover')
+    const nextItem = items[index]
+    if (nextItem) {
+      nextItem.classList.add('bg-state-base-hover')
+      highlightedElementRef.current = nextItem
+      activeIndexRef.current = index
+      return
+    }
+    highlightedElementRef.current = null
+    activeIndexRef.current = -1
+  }, [])
 
   const isShowRAGRecommendations = isInRAGPipeline && activeTab === ToolTypeEnum.All && !hasFilter
   const hasToolsListContent = tools.length > 0 || isShowRAGRecommendations
@@ -195,7 +234,47 @@ const AllTools = ({
     && !isInRAGPipeline
     && activeTab === ToolTypeEnum.All
     && !hasFilter
+    && !hideFeaturedTool
   const shouldShowMarketplaceFooter = enable_marketplace && !hasFilter
+
+  useEffect(() => {
+    if (!enableKeyboardNavigation) {
+      itemElementsRef.current = []
+      clearHighlight()
+      return
+    }
+    const items = refreshKeyboardItems()
+    if (activeIndexRef.current >= items.length)
+      clearHighlight()
+  }, [enableKeyboardNavigation, refreshKeyboardItems, clearHighlight, tools, activeTab, activeView, hasSearchText])
+
+  useEventListener('keydown', (event: KeyboardEvent) => {
+    if (!enableKeyboardNavigation)
+      return
+    const items = refreshKeyboardItems()
+    if (items.length === 0)
+      return
+    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key))
+      return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      onClose?.()
+      return
+    }
+    if (event.key === 'Enter') {
+      const index = activeIndexRef.current
+      if (index < 0 || index >= items.length)
+        return
+      items[index]?.click()
+      return
+    }
+    const delta = event.key === 'ArrowDown' ? 1 : -1
+    const baseIndex = activeIndexRef.current < 0 ? -1 : activeIndexRef.current
+    const nextIndex = Math.min(Math.max(baseIndex + delta, 0), items.length - 1)
+    applyHighlight(nextIndex, items)
+    items[nextIndex]?.scrollIntoView({ block: 'nearest' })
+  }, { target: typeof document !== 'undefined' ? document : undefined, capture: true })
 
   const handleRAGSelect = useCallback<OnSelectBlock>((type, pluginDefaultValue) => {
     if (!pluginDefaultValue)
@@ -204,9 +283,9 @@ const AllTools = ({
   }, [onSelect])
 
   return (
-    <div className={cn('min-w-[400px] max-w-[500px]', className)}>
-      <div className='flex items-center justify-between border-b border-divider-subtle px-3'>
-        <div className='flex h-8 items-center space-x-1'>
+    <div className={cn('max-w-[500px]', className)}>
+      <div className="flex items-center justify-between border-b border-divider-subtle px-3">
+        <div className="flex h-8 items-center space-x-1">
           {
             tabs.map(tab => (
               <div
@@ -227,10 +306,10 @@ const AllTools = ({
           <ViewTypeSelect viewType={activeView} onChange={setActiveView} />
         )}
       </div>
-      <div className='flex max-h-[464px] flex-col'>
+      <div className="flex max-h-[464px] flex-col">
         <div
           ref={wrapElemRef}
-          className='flex-1 overflow-y-auto'
+          className="flex-1 overflow-y-auto"
           onScroll={() => pluginRef.current?.handleScroll()}
         >
           <div className={cn(shouldShowEmptyState && 'hidden')}>
@@ -248,22 +327,23 @@ const AllTools = ({
                   providerMap={providerMap}
                   onSelect={onSelect}
                   selectedTools={selectedTools}
-                  canChooseMCPTool={canChooseMCPTool}
                   isLoading={featuredLoading}
                   onInstallSuccess={async () => {
                     await onFeaturedInstallSuccess?.()
                   }}
                 />
-                <div className='px-3'>
-                  <Divider className='!h-px' />
+                <div className="px-3">
+                  <Divider className="!h-px" />
                 </div>
               </>
             )}
             {hasToolsListContent && (
               <>
-                <div className='px-3 pb-1 pt-2'>
-                  <span className='system-xs-medium text-text-primary'>{t('tools.allTools')}</span>
-                </div>
+                {!hideFeaturedTool && (
+                  <div className="px-3 pb-1 pt-2">
+                    <span className="text-text-primary system-xs-medium">{t('allTools', { ns: 'tools' })}</span>
+                  </div>
+                )}
                 <Tools
                   className={toolContentClassName}
                   tools={tools}
@@ -274,7 +354,7 @@ const AllTools = ({
                   viewType={isSupportGroupView ? activeView : ViewType.flat}
                   hasSearchText={hasSearchText}
                   selectedTools={selectedTools}
-                  canChooseMCPTool={canChooseMCPTool}
+                  hideSelectedInfo={hideSelectedInfo}
                 />
               </>
             )}
@@ -293,21 +373,21 @@ const AllTools = ({
           </div>
 
           {shouldShowEmptyState && (
-            <div className='flex h-full flex-col items-center justify-center gap-3 py-12 text-center'>
-              <SearchMenu className='h-8 w-8 text-text-quaternary' />
-              <div className='text-sm font-medium text-text-secondary'>
-                {t('workflow.tabs.noPluginsFound')}
+            <div className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
+              <SearchMenu className="h-8 w-8 text-text-quaternary" />
+              <div className="text-sm font-medium text-text-secondary">
+                {t('tabs.noPluginsFound', { ns: 'workflow' })}
               </div>
               <Link
-                href='https://github.com/langgenius/dify-plugins/issues/new?template=plugin_request.yaml'
-                target='_blank'
+                href="https://github.com/langgenius/dify-plugins/issues/new?template=plugin_request.yaml"
+                target="_blank"
               >
                 <Button
-                  size='small'
-                  variant='secondary-accent'
-                  className='h-6 cursor-pointer px-3 text-xs'
+                  size="small"
+                  variant="secondary-accent"
+                  className="h-6 cursor-pointer px-3 text-xs"
                 >
-                  {t('workflow.tabs.requestToCommunity')}
+                  {t('tabs.requestToCommunity', { ns: 'workflow' })}
                 </Button>
               </Link>
             </div>
@@ -317,10 +397,10 @@ const AllTools = ({
           <Link
             className={marketplaceFooterClassName}
             href={getMarketplaceUrl('', { category: PluginCategoryEnum.tool })}
-            target='_blank'
+            target="_blank"
           >
-            <span>{t('plugin.findMoreInMarketplace')}</span>
-            <RiArrowRightUpLine className='ml-0.5 h-3 w-3' />
+            <span>{t('findMoreInMarketplace', { ns: 'plugin' })}</span>
+            <RiArrowRightUpLine className="ml-0.5 h-3 w-3" />
           </Link>
         )}
       </div>

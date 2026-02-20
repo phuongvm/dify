@@ -1,7 +1,7 @@
-import { useTranslation } from 'react-i18next'
-import { useRouter } from 'next/navigation'
-import { useContext } from 'use-context-selector'
-import React, { useCallback, useState } from 'react'
+import type { Operation } from './app-operations'
+import type { DuplicateAppModalProps } from '@/app/components/app/duplicate-modal'
+import type { CreateAppModalProps } from '@/app/components/explore/create-app-modal'
+import type { EnvironmentVariable } from '@/app/components/workflow/types'
 import {
   RiDeleteBinLine,
   RiEditLine,
@@ -11,26 +11,31 @@ import {
   RiFileDownloadLine,
   RiFileUploadLine,
 } from '@remixicon/react'
-import AppIcon from '../base/app-icon'
+import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
+import * as React from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useContext } from 'use-context-selector'
+import CardView from '@/app/(commonLayout)/app/(appDetailLayout)/[appId]/overview/card-view'
 import { useStore as useAppStore } from '@/app/components/app/store'
+import Button from '@/app/components/base/button'
+import ContentDialog from '@/app/components/base/content-dialog'
 import { ToastContext } from '@/app/components/base/toast'
+import { collaborationManager } from '@/app/components/workflow/collaboration/core/collaboration-manager'
+import { webSocketClient } from '@/app/components/workflow/collaboration/core/websocket-manager'
+import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
 import { useAppContext } from '@/context/app-context'
 import { useProviderContext } from '@/context/provider-context'
-import { copyApp, deleteApp, exportAppConfig, updateAppInfo } from '@/service/apps'
-import type { DuplicateAppModalProps } from '@/app/components/app/duplicate-modal'
-import type { CreateAppModalProps } from '@/app/components/explore/create-app-modal'
-import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
-import { getRedirection } from '@/utils/app-redirection'
-import type { EnvironmentVariable } from '@/app/components/workflow/types'
+import { copyApp, deleteApp, exportAppBundle, exportAppConfig, fetchAppDetail, updateAppInfo } from '@/service/apps'
+import { useInvalidateAppList } from '@/service/use-apps'
 import { fetchWorkflowDraft } from '@/service/workflow'
-import ContentDialog from '@/app/components/base/content-dialog'
-import Button from '@/app/components/base/button'
-import CardView from '@/app/(commonLayout)/app/(appDetailLayout)/[appId]/overview/card-view'
-import type { Operation } from './app-operations'
-import AppOperations from './app-operations'
-import dynamic from 'next/dynamic'
-import cn from '@/utils/classnames'
 import { AppModeEnum } from '@/types/app'
+import { getRedirection } from '@/utils/app-redirection'
+import { cn } from '@/utils/classnames'
+import { downloadBlob } from '@/utils/download'
+import AppIcon from '../base/app-icon'
+import AppOperations from './app-operations'
 
 const SwitchAppModal = dynamic(() => import('@/app/components/app/switch-app-modal'), {
   ssr: false,
@@ -65,6 +70,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
   const { onPlanInfoChanged } = useProviderContext()
   const appDetail = useAppStore(state => state.appDetail)
   const setAppDetail = useAppStore(state => state.setAppDetail)
+  const invalidateAppList = useInvalidateAppList()
   const [open, setOpen] = useState(openState)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDuplicateModal, setShowDuplicateModal] = useState(false)
@@ -73,6 +79,20 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
   const [showImportDSLModal, setShowImportDSLModal] = useState<boolean>(false)
   const [secretEnvList, setSecretEnvList] = useState<EnvironmentVariable[]>([])
   const [showExportWarning, setShowExportWarning] = useState(false)
+  const [exportSandboxed, setExportSandboxed] = useState(false)
+
+  const emitAppMetaUpdate = useCallback(() => {
+    if (!appDetail?.id)
+      return
+    const socket = webSocketClient.getSocket(appDetail.id)
+    if (socket) {
+      socket.emit('collaboration_event', {
+        type: 'app_meta_update',
+        data: { timestamp: Date.now() },
+        timestamp: Date.now(),
+      })
+    }
+  }, [appDetail])
 
   const onEdit: CreateAppModalProps['onConfirm'] = useCallback(async ({
     name,
@@ -99,14 +119,15 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
       setShowEditModal(false)
       notify({
         type: 'success',
-        message: t('app.editDone'),
+        message: t('editDone', { ns: 'app' }),
       })
       setAppDetail(app)
+      emitAppMetaUpdate()
     }
     catch {
-      notify({ type: 'error', message: t('app.editFailed') })
+      notify({ type: 'error', message: t('editFailed', { ns: 'app' }) })
     }
-  }, [appDetail, notify, setAppDetail, t])
+  }, [appDetail, notify, setAppDetail, t, emitAppMetaUpdate])
 
   const onCopy: DuplicateAppModalProps['onConfirm'] = async ({ name, icon_type, icon, icon_background }) => {
     if (!appDetail)
@@ -123,35 +144,37 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
       setShowDuplicateModal(false)
       notify({
         type: 'success',
-        message: t('app.newApp.appCreated'),
+        message: t('newApp.appCreated', { ns: 'app' }),
       })
       localStorage.setItem(NEED_REFRESH_APP_LIST_KEY, '1')
       onPlanInfoChanged()
       getRedirection(true, newApp, replace)
     }
     catch {
-      notify({ type: 'error', message: t('app.newApp.appCreateFailed') })
+      notify({ type: 'error', message: t('newApp.appCreateFailed', { ns: 'app' }) })
     }
   }
 
-  const onExport = async (include = false) => {
+  const onExport = async (include = false, sandboxed = false) => {
     if (!appDetail)
       return
     try {
+      if (sandboxed) {
+        await exportAppBundle({
+          appID: appDetail.id,
+          include,
+        })
+        return
+      }
       const { data } = await exportAppConfig({
         appID: appDetail.id,
         include,
       })
-      const a = document.createElement('a')
       const file = new Blob([data], { type: 'application/yaml' })
-      const url = URL.createObjectURL(file)
-      a.href = url
-      a.download = `${appDetail.name}.yml`
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadBlob({ data: file, fileName: `${appDetail.name}.yaml` })
     }
     catch {
-      notify({ type: 'error', message: t('app.exportFailed') })
+      notify({ type: 'error', message: t('exportFailed', { ns: 'app' }) })
     }
   }
 
@@ -159,7 +182,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
     if (!appDetail)
       return
     if (appDetail.mode !== AppModeEnum.WORKFLOW && appDetail.mode !== AppModeEnum.ADVANCED_CHAT) {
-      onExport()
+      onExport(false, false)
       return
     }
 
@@ -173,14 +196,16 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
     try {
       const workflowDraft = await fetchWorkflowDraft(`/apps/${appDetail.id}/workflows/draft`)
       const list = (workflowDraft.environment_variables || []).filter(env => env.value_type === 'secret')
+      const sandboxed = workflowDraft.features?.sandbox?.enabled === true
       if (list.length === 0) {
-        onExport()
+        onExport(false, sandboxed)
         return
       }
       setSecretEnvList(list)
+      setExportSandboxed(sandboxed)
     }
     catch {
-      notify({ type: 'error', message: t('app.exportFailed') })
+      notify({ type: 'error', message: t('exportFailed', { ns: 'app' }) })
     }
   }
 
@@ -189,7 +214,8 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
       return
     try {
       await deleteApp(appDetail.id)
-      notify({ type: 'success', message: t('app.appDeleted') })
+      notify({ type: 'success', message: t('appDeleted', { ns: 'app' }) })
+      invalidateAppList()
       onPlanInfoChanged()
       setAppDetail()
       replace('/apps')
@@ -197,11 +223,28 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
     catch (e: any) {
       notify({
         type: 'error',
-        message: `${t('app.appDeleteFailed')}${'message' in e ? `: ${e.message}` : ''}`,
+        message: `${t('appDeleteFailed', { ns: 'app' })}${'message' in e ? `: ${e.message}` : ''}`,
       })
     }
     setShowConfirmDelete(false)
-  }, [appDetail, notify, onPlanInfoChanged, replace, setAppDetail, t])
+  }, [appDetail, invalidateAppList, notify, onPlanInfoChanged, replace, setAppDetail, t])
+
+  useEffect(() => {
+    if (!appDetail?.id)
+      return
+
+    const unsubscribe = collaborationManager.onAppMetaUpdate(async () => {
+      try {
+        const res = await fetchAppDetail({ url: '/apps', id: appDetail.id })
+        setAppDetail({ ...res })
+      }
+      catch (error) {
+        console.error('failed to refresh app detail from collaboration update:', error)
+      }
+    })
+
+    return unsubscribe
+  }, [appDetail?.id, setAppDetail])
 
   const { isCurrentWorkspaceEditor } = useAppContext()
 
@@ -211,7 +254,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
   const primaryOperations = [
     {
       id: 'edit',
-      title: t('app.editApp'),
+      title: t('editApp', { ns: 'app' }),
       icon: <RiEditLine />,
       onClick: () => {
         setOpen(false)
@@ -221,7 +264,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
     },
     {
       id: 'duplicate',
-      title: t('app.duplicate'),
+      title: t('duplicate', { ns: 'app' }),
       icon: <RiFileCopy2Line />,
       onClick: () => {
         setOpen(false)
@@ -231,7 +274,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
     },
     {
       id: 'export',
-      title: t('app.export'),
+      title: t('export', { ns: 'app' }),
       icon: <RiFileDownloadLine />,
       onClick: exportCheck,
     },
@@ -239,16 +282,18 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
 
   const secondaryOperations: Operation[] = [
     // Import DSL (conditional)
-    ...(appDetail.mode === AppModeEnum.ADVANCED_CHAT || appDetail.mode === AppModeEnum.WORKFLOW) ? [{
-      id: 'import',
-      title: t('workflow.common.importDSL'),
-      icon: <RiFileUploadLine />,
-      onClick: () => {
-        setOpen(false)
-        onDetailExpand?.(false)
-        setShowImportDSLModal(true)
-      },
-    }] : [],
+    ...(appDetail.mode === AppModeEnum.ADVANCED_CHAT || appDetail.mode === AppModeEnum.WORKFLOW)
+      ? [{
+          id: 'import',
+          title: t('common.importDSL', { ns: 'workflow' }),
+          icon: <RiFileUploadLine />,
+          onClick: () => {
+            setOpen(false)
+            onDetailExpand?.(false)
+            setShowImportDSLModal(true)
+          },
+        }]
+      : [],
     // Divider
     {
       id: 'divider-1',
@@ -260,7 +305,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
     // Delete operation
     {
       id: 'delete',
-      title: t('common.operation.delete'),
+      title: t('operation.delete', { ns: 'common' }),
       icon: <RiDeleteBinLine />,
       onClick: () => {
         setOpen(false)
@@ -271,29 +316,32 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
   ]
 
   // Keep the switch operation separate as it's not part of the main operations
-  const switchOperation = (appDetail.mode === AppModeEnum.COMPLETION || appDetail.mode === AppModeEnum.CHAT) ? {
-    id: 'switch',
-    title: t('app.switch'),
-    icon: <RiExchange2Line />,
-    onClick: () => {
-      setOpen(false)
-      onDetailExpand?.(false)
-      setShowSwitchModal(true)
-    },
-  } : null
+  const switchOperation = (appDetail.mode === AppModeEnum.COMPLETION || appDetail.mode === AppModeEnum.CHAT)
+    ? {
+        id: 'switch',
+        title: t('switch', { ns: 'app' }),
+        icon: <RiExchange2Line />,
+        onClick: () => {
+          setOpen(false)
+          onDetailExpand?.(false)
+          setShowSwitchModal(true)
+        },
+      }
+    : null
 
   return (
     <div>
       {!onlyShowDetail && (
-        <button type="button"
+        <button
+          type="button"
           onClick={() => {
             if (isCurrentWorkspaceEditor)
               setOpen(v => !v)
           }}
-          className='block w-full'
+          className="block w-full"
         >
-          <div className='flex flex-col gap-2 rounded-lg p-1 hover:bg-state-base-hover'>
-            <div className='flex items-center gap-1'>
+          <div className="flex flex-col gap-2 rounded-lg p-1 hover:bg-state-base-hover">
+            <div className="flex items-center gap-1">
               <div className={cn(!expand && 'ml-1')}>
                 <AppIcon
                   size={expand ? 'large' : 'small'}
@@ -304,31 +352,36 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
                 />
               </div>
               {expand && (
-                <div className='ml-auto flex items-center justify-center rounded-md p-0.5'>
-                  <div className='flex h-5 w-5 items-center justify-center'>
-                    <RiEqualizer2Line className='h-4 w-4 text-text-tertiary' />
+                <div className="ml-auto flex items-center justify-center rounded-md p-0.5">
+                  <div className="flex h-5 w-5 items-center justify-center">
+                    <RiEqualizer2Line className="h-4 w-4 text-text-tertiary" />
                   </div>
                 </div>
               )}
             </div>
             {!expand && (
-              <div className='flex items-center justify-center'>
-                <div className='flex h-5 w-5 items-center justify-center rounded-md p-0.5'>
-                  <RiEqualizer2Line className='h-4 w-4 text-text-tertiary' />
+              <div className="flex items-center justify-center">
+                <div className="flex h-5 w-5 items-center justify-center rounded-md p-0.5">
+                  <RiEqualizer2Line className="h-4 w-4 text-text-tertiary" />
                 </div>
               </div>
             )}
             {expand && (
-              <div className='flex flex-col items-start gap-1'>
-                <div className='flex w-full'>
-                  <div className='system-md-semibold truncate whitespace-nowrap text-text-secondary'>{appDetail.name}</div>
+              <div className="flex flex-col items-start gap-1">
+                <div className="flex w-full">
+                  <div className="truncate whitespace-nowrap text-text-secondary system-md-semibold">{appDetail.name}</div>
                 </div>
-                <div className='system-2xs-medium-uppercase whitespace-nowrap text-text-tertiary'>
-                  {appDetail.mode === AppModeEnum.ADVANCED_CHAT ? t('app.types.advanced')
-                    : appDetail.mode === AppModeEnum.AGENT_CHAT ? t('app.types.agent')
-                      : appDetail.mode === AppModeEnum.CHAT ? t('app.types.chatbot')
-                        : appDetail.mode === AppModeEnum.COMPLETION ? t('app.types.completion')
-                          : t('app.types.workflow')}</div>
+                <div className="whitespace-nowrap text-text-tertiary system-2xs-medium-uppercase">
+                  {appDetail.mode === AppModeEnum.ADVANCED_CHAT
+                    ? t('types.advanced', { ns: 'app' })
+                    : appDetail.mode === AppModeEnum.AGENT_CHAT
+                      ? t('types.agent', { ns: 'app' })
+                      : appDetail.mode === AppModeEnum.CHAT
+                        ? t('types.chatbot', { ns: 'app' })
+                        : appDetail.mode === AppModeEnum.COMPLETION
+                          ? t('types.completion', { ns: 'app' })
+                          : t('types.workflow', { ns: 'app' })}
+                </div>
               </div>
             )}
           </div>
@@ -340,25 +393,25 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
           setOpen(false)
           onDetailExpand?.(false)
         }}
-        className='absolute bottom-2 left-2 top-2 flex w-[420px] flex-col rounded-2xl !p-0'
+        className="absolute bottom-2 left-2 top-2 flex w-[420px] flex-col rounded-2xl !p-0"
       >
-        <div className='flex shrink-0 flex-col items-start justify-center gap-3 self-stretch p-4'>
-          <div className='flex items-center gap-3 self-stretch'>
+        <div className="flex shrink-0 flex-col items-start justify-center gap-3 self-stretch p-4">
+          <div className="flex items-center gap-3 self-stretch">
             <AppIcon
-              size='large'
+              size="large"
               iconType={appDetail.icon_type}
               icon={appDetail.icon}
               background={appDetail.icon_background}
               imageUrl={appDetail.icon_url}
             />
-            <div className='flex flex-1 flex-col items-start justify-center overflow-hidden'>
-              <div className='system-md-semibold w-full truncate text-text-secondary'>{appDetail.name}</div>
-              <div className='system-2xs-medium-uppercase text-text-tertiary'>{appDetail.mode === AppModeEnum.ADVANCED_CHAT ? t('app.types.advanced') : appDetail.mode === AppModeEnum.AGENT_CHAT ? t('app.types.agent') : appDetail.mode === AppModeEnum.CHAT ? t('app.types.chatbot') : appDetail.mode === AppModeEnum.COMPLETION ? t('app.types.completion') : t('app.types.workflow')}</div>
+            <div className="flex flex-1 flex-col items-start justify-center overflow-hidden">
+              <div className="w-full truncate text-text-secondary system-md-semibold">{appDetail.name}</div>
+              <div className="text-text-tertiary system-2xs-medium-uppercase">{appDetail.mode === AppModeEnum.ADVANCED_CHAT ? t('types.advanced', { ns: 'app' }) : appDetail.mode === AppModeEnum.AGENT_CHAT ? t('types.agent', { ns: 'app' }) : appDetail.mode === AppModeEnum.CHAT ? t('types.chatbot', { ns: 'app' }) : appDetail.mode === AppModeEnum.COMPLETION ? t('types.completion', { ns: 'app' }) : t('types.workflow', { ns: 'app' })}</div>
             </div>
           </div>
           {/* description */}
           {appDetail.description && (
-            <div className='system-xs-regular overflow-wrap-anywhere max-h-[105px] w-full max-w-full overflow-y-auto whitespace-normal break-words text-text-tertiary'>{appDetail.description}</div>
+            <div className="overflow-wrap-anywhere max-h-[105px] w-full max-w-full overflow-y-auto whitespace-normal break-words text-text-tertiary system-xs-regular">{appDetail.description}</div>
           )}
           {/* operations */}
           <AppOperations
@@ -370,19 +423,19 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
         <CardView
           appId={appDetail.id}
           isInPanel={true}
-          className='flex flex-1 flex-col gap-2 overflow-auto px-2 py-1'
+          className="flex flex-1 flex-col gap-2 overflow-auto px-2 py-1"
         />
         {/* Switch operation (if available) */}
         {switchOperation && (
-          <div className='flex min-h-fit shrink-0 flex-col items-start justify-center gap-3 self-stretch pb-2'>
+          <div className="flex min-h-fit shrink-0 flex-col items-start justify-center gap-3 self-stretch pb-2">
             <Button
-              size={'medium'}
-              variant={'ghost'}
-              className='gap-0.5'
+              size="medium"
+              variant="ghost"
+              className="gap-0.5"
               onClick={switchOperation.onClick}
             >
               {switchOperation.icon}
-              <span className='system-sm-medium text-text-tertiary'>{switchOperation.title}</span>
+              <span className="text-text-tertiary system-sm-medium">{switchOperation.title}</span>
             </Button>
           </div>
         )}
@@ -427,8 +480,8 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
       )}
       {showConfirmDelete && (
         <Confirm
-          title={t('app.deleteAppConfirmTitle')}
-          content={t('app.deleteAppConfirmContent')}
+          title={t('deleteAppConfirmTitle', { ns: 'app' })}
+          content={t('deleteAppConfirmContent', { ns: 'app' })}
           isShow={showConfirmDelete}
           onConfirm={onConfirmDelete}
           onCancel={() => setShowConfirmDelete(false)}
@@ -443,7 +496,7 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
       {secretEnvList.length > 0 && (
         <DSLExportConfirmModal
           envList={secretEnvList}
-          onConfirm={onExport}
+          onConfirm={include => onExport(include, exportSandboxed)}
           onClose={() => setSecretEnvList([])}
         />
       )}
@@ -451,8 +504,8 @@ const AppInfo = ({ expand, onlyShowDetail = false, openState = false, onDetailEx
         <Confirm
           type="info"
           isShow={showExportWarning}
-          title={t('workflow.sidebar.exportWarning')}
-          content={t('workflow.sidebar.exportWarningDesc')}
+          title={t('sidebar.exportWarning', { ns: 'workflow' })}
+          content={t('sidebar.exportWarningDesc', { ns: 'workflow' })}
           onConfirm={handleConfirmExport}
           onCancel={() => setShowExportWarning(false)}
         />

@@ -1,30 +1,33 @@
+import type {
+  ChatMessageRes,
+  IChatItem,
+} from '@/app/components/base/chat/chat/type'
+import type { ChatItem, ChatItemInTree } from '@/app/components/base/chat/types'
+import { RiCloseLine } from '@remixicon/react'
 import {
   memo,
   useCallback,
   useEffect,
   useState,
 } from 'react'
-import { RiCloseLine } from '@remixicon/react'
+import { useStore as useAppStore } from '@/app/components/app/store'
+import Chat from '@/app/components/base/chat/chat'
+import { buildChatItemTree, buildLLMGenerationItemsFromHistorySequence, getThreadMessages } from '@/app/components/base/chat/utils'
+import { getProcessedFilesFromResponse } from '@/app/components/base/file-uploader/utils'
+import Loading from '@/app/components/base/loading'
+import { fetchConversationMessages } from '@/service/debug'
+import { useWorkflowRun } from '../../hooks'
 import {
   useStore,
   useWorkflowStore,
 } from '../../store'
-import { useWorkflowRun } from '../../hooks'
 import { formatWorkflowRunIdentifier } from '../../utils'
 import UserInput from './user-input'
-import Chat from '@/app/components/base/chat/chat'
-import type { ChatItem, ChatItemInTree } from '@/app/components/base/chat/types'
-import { fetchConversationMessages } from '@/service/debug'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import Loading from '@/app/components/base/loading'
-import { getProcessedFilesFromResponse } from '@/app/components/base/file-uploader/utils'
-import type { IChatItem } from '@/app/components/base/chat/chat/type'
-import { buildChatItemTree, getThreadMessages } from '@/app/components/base/chat/utils'
 
-function getFormattedChatList(messages: any[]) {
+function getFormattedChatList(messages: ChatMessageRes[]) {
   const res: ChatItem[] = []
-  messages.forEach((item: any) => {
-    const questionFiles = item.message_files?.filter((file: any) => file.belongs_to === 'user') || []
+  messages.forEach((item: ChatMessageRes) => {
+    const questionFiles = item.message_files?.filter(file => file.belongs_to === 'user') || []
     res.push({
       id: `question-${item.id}`,
       content: item.query,
@@ -35,7 +38,8 @@ function getFormattedChatList(messages: any[]) {
     const answerFiles = item.message_files?.filter((file: any) => file.belongs_to === 'assistant') || []
     res.push({
       id: item.id,
-      content: item.answer,
+      content: buildLLMGenerationItemsFromHistorySequence(item).message,
+      llmGenerationItems: buildLLMGenerationItemsFromHistorySequence(item).llmGenerationItems,
       feedback: item.feedback,
       isAnswer: true,
       citation: item.metadata?.retriever_resources,
@@ -63,7 +67,7 @@ const ChatRecord = () => {
         setFetched(false)
         const res = await fetchConversationMessages(appDetail.id, currentConversationID)
 
-        const newAllChatItems = getFormattedChatList((res as any).data)
+        const newAllChatItems = getFormattedChatList((res as any).data as ChatMessageRes[])
 
         const tree = buildChatItemTree(newAllChatItems)
         setChatItemTree(tree)
@@ -87,48 +91,48 @@ const ChatRecord = () => {
 
   return (
     <div
-      className='flex h-full w-[420px] flex-col rounded-l-2xl border border-components-panel-border bg-chatbot-bg shadow-xl'
+      className="flex h-full w-[420px] flex-col rounded-l-2xl border border-components-panel-border bg-chatbot-bg shadow-xl"
       // style={{
       //   background: 'linear-gradient(156deg, rgba(242, 244, 247, 0.80) 0%, rgba(242, 244, 247, 0.00) 99.43%), var(--white, #FFF)',
       // }}
     >
       {!fetched && (
-        <div className='flex h-full items-center justify-center'>
+        <div className="flex h-full items-center justify-center">
           <Loading />
         </div>
       )}
       {fetched && (
         <>
-          <div className='flex shrink-0 items-center justify-between p-4 pb-1 text-base font-semibold text-text-primary'>
+          <div className="flex shrink-0 items-center justify-between p-4 pb-1 text-base font-semibold text-text-primary">
             {`TEST CHAT${formatWorkflowRunIdentifier(historyWorkflowData?.finished_at)}`}
             <div
-              className='flex h-6 w-6 cursor-pointer items-center justify-center'
+              className="flex h-6 w-6 cursor-pointer items-center justify-center"
               onClick={() => {
                 handleLoadBackupDraft()
                 workflowStore.setState({ historyWorkflowData: undefined })
               }}
             >
-              <RiCloseLine className='h-4 w-4 text-text-tertiary' />
+              <RiCloseLine className="h-4 w-4 text-text-tertiary" />
             </div>
           </div>
-          <div className='h-0 grow'>
+          <div className="h-0 grow">
             <Chat
               config={{
                 supportCitationHitInfo: true,
                 questionEditEnable: false,
               } as any}
               chatList={threadChatItems}
-              chatContainerClassName='px-3'
-              chatContainerInnerClassName='pt-6 w-full max-w-full mx-auto'
-              chatFooterClassName='px-4 rounded-b-2xl'
-              chatFooterInnerClassName='pb-4 w-full max-w-full mx-auto'
+              chatContainerClassName="px-3"
+              chatContainerInnerClassName="pt-6 w-full max-w-full mx-auto"
+              chatFooterClassName="px-4 rounded-b-2xl"
+              chatFooterInnerClassName="pb-4 w-full max-w-full mx-auto"
               chatNode={<UserInput />}
               noChatInput
               allToolIcons={{}}
               showPromptLog
               switchSibling={switchSibling}
               noSpacing
-              chatAnswerContainerInner='!pr-2'
+              chatAnswerContainerInner="!pr-2"
             />
           </div>
         </>

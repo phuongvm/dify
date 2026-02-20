@@ -1,8 +1,8 @@
-import React from 'react'
 import type { BasicPlan } from '../../../type'
-import { Plan } from '../../../type'
-import cn from '@/utils/classnames'
 import { RiArrowRightLine } from '@remixicon/react'
+import * as React from 'react'
+import { cn } from '@/utils/classnames'
+import { Plan } from '../../../type'
 
 const BUTTON_CLASSNAME = {
   [Plan.sandbox]: {
@@ -34,18 +34,18 @@ const Button = ({
 }: ButtonProps) => {
   return (
     <button
-      type='button'
+      type="button"
       disabled={isPlanDisabled}
       className={cn(
-        'system-xl-semibold flex items-center gap-x-2 py-3 pl-5 pr-4',
+        'flex items-center gap-x-2 py-3 pl-5 pr-4 system-xl-semibold',
         BUTTON_CLASSNAME[plan].btnClassname,
         isPlanDisabled && BUTTON_CLASSNAME[plan].btnDisabledClassname,
         isPlanDisabled && 'cursor-not-allowed',
       )}
       onClick={handleGetPayUrl}
     >
-      <span className='grow text-start'>{btnText}</span>
-      {!isPlanDisabled && <RiArrowRightLine className='size-5 shrink-0' />}
+      <span className="grow text-start">{btnText}</span>
+      {!isPlanDisabled && <RiArrowRightLine className="size-5 shrink-0" />}
     </button>
   )
 }

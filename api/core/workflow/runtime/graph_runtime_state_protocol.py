@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from core.model_runtime.entities.llm_entities import LLMUsage
@@ -9,7 +9,7 @@ from core.workflow.system_variable import SystemVariableReadOnlyView
 class ReadOnlyVariablePool(Protocol):
     """Read-only interface for VariablePool."""
 
-    def get(self, node_id: str, variable_key: str) -> Segment | None:
+    def get(self, selector: Sequence[str], /) -> Segment | None:
         """Get a variable value (read-only)."""
         ...
 
@@ -77,6 +77,9 @@ class ReadOnlyGraphRuntimeState(Protocol):
     def get_output(self, key: str, default: Any = None) -> Any:
         """Get a single output value (returns a copy)."""
         ...
+
+    @property
+    def sandbox(self) -> Any: ...
 
     def dumps(self) -> str:
         """Serialize the runtime state into a JSON snapshot (read-only)."""

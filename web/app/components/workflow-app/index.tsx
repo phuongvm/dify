@@ -1,54 +1,194 @@
 'use client'
 
+import type { ReactNode } from 'react'
+import type { Features as FeaturesData } from '@/app/components/base/features/types'
+import type { InjectWorkflowStoreSliceFn } from '@/app/components/workflow/store'
+import dynamic from 'next/dynamic'
+import { useSearchParams } from 'next/navigation'
+import { useQueryState } from 'nuqs'
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
+  useState,
 } from 'react'
-import {
-  SupportUploadFileTypes,
-} from '@/app/components/workflow/types'
-import {
-  useWorkflowInit,
-} from './hooks/use-workflow-init'
-import { useAppTriggers } from '@/service/use-tools'
-import { useTriggerStatusStore } from '@/app/components/workflow/store/trigger-status'
 import { useStore as useAppStore } from '@/app/components/app/store'
-import { useWorkflowStore } from '@/app/components/workflow/store'
+import { FeaturesProvider } from '@/app/components/base/features'
+import Loading from '@/app/components/base/loading'
+import { FILE_EXTS } from '@/app/components/base/prompt-editor/constants'
+import WorkflowWithDefaultContext from '@/app/components/workflow'
+import { useCollaboration } from '@/app/components/workflow/collaboration'
+import { collaborationManager } from '@/app/components/workflow/collaboration/core/collaboration-manager'
+import {
+  WorkflowContextProvider,
+} from '@/app/components/workflow/context'
+import { HeaderShell } from '@/app/components/workflow/header'
+import OnlineUsers from '@/app/components/workflow/header/online-users'
+import { useStore, useWorkflowStore } from '@/app/components/workflow/store'
+import { useTriggerStatusStore } from '@/app/components/workflow/store/trigger-status'
+import {
+  BlockEnum,
+  SupportUploadFileTypes,
+  ViewType,
+} from '@/app/components/workflow/types'
 import {
   initialEdges,
   initialNodes,
 } from '@/app/components/workflow/utils'
-import Loading from '@/app/components/base/loading'
-import { FeaturesProvider } from '@/app/components/base/features'
-import type { Features as FeaturesData } from '@/app/components/base/features/types'
-import { FILE_EXTS } from '@/app/components/base/prompt-editor/constants'
 import { useAppContext } from '@/context/app-context'
-import WorkflowWithDefaultContext from '@/app/components/workflow'
-import {
-  WorkflowContextProvider,
-} from '@/app/components/workflow/context'
-import type { InjectWorkflowStoreSliceFn } from '@/app/components/workflow/store'
-import { createWorkflowSlice } from './store/workflow/workflow-slice'
-import WorkflowAppMain from './components/workflow-main'
-import { useSearchParams } from 'next/navigation'
-
 import { fetchRunDetail } from '@/service/log'
-import { useGetRunAndTraceUrl } from './hooks/use-get-run-and-trace-url'
+import { useAppTriggers } from '@/service/use-tools'
 import { AppModeEnum } from '@/types/app'
+import { useFeatures } from '../base/features/hooks'
+import ViewPicker from '../workflow/view-picker'
+import SandboxMigrationModal from './components/sandbox-migration-modal'
+import WorkflowAppMain from './components/workflow-main'
+import { useGetRunAndTraceUrl } from './hooks/use-get-run-and-trace-url'
+import { useNodesSyncDraft } from './hooks/use-nodes-sync-draft'
+import {
+  useWorkflowInit,
+} from './hooks/use-workflow-init'
+import { parseAsViewType, WORKFLOW_VIEW_PARAM_KEY } from './search-params'
+import { createWorkflowSlice } from './store/workflow/workflow-slice'
+import { getSandboxMigrationDismissed, setSandboxMigrationDismissed } from './utils/sandbox-migration-storage'
+
+const SkillMain = dynamic(() => import('@/app/components/workflow/skill/main'), {
+  ssr: false,
+})
+
+const CollaborationSession = () => {
+  const appId = useStore(s => s.appId)
+  useCollaboration(appId || '')
+  return null
+}
+
+type WorkflowViewContentProps = {
+  renderGraph: (headerLeftSlot: ReactNode) => ReactNode
+  reload: () => Promise<void>
+}
+
+const WorkflowViewContent = ({
+  renderGraph,
+  reload,
+}: WorkflowViewContentProps) => {
+  const features = useFeatures(s => s.features)
+  const isSupportSandbox = !!features.sandbox?.enabled
+  const isResponding = useStore(s => s.isResponding)
+  const [viewType, doSetViewType] = useQueryState(WORKFLOW_VIEW_PARAM_KEY, parseAsViewType)
+  const { syncWorkflowDraftImmediately } = useNodesSyncDraft()
+  const pendingSyncRef = useRef<Promise<void> | null>(null)
+  const [isGraphRefreshing, setIsGraphRefreshing] = useState(false)
+
+  const refreshGraph = useCallback(() => {
+    setIsGraphRefreshing(true)
+    return reload().finally(() => {
+      setIsGraphRefreshing(false)
+    })
+  }, [reload])
+
+  const handleViewTypeChange = useCallback((type: ViewType) => {
+    if (viewType === ViewType.graph && type !== viewType)
+      pendingSyncRef.current = syncWorkflowDraftImmediately(true).catch(() => { })
+
+    doSetViewType(type)
+    if (type === ViewType.graph) {
+      const pending = pendingSyncRef.current
+      if (pending) {
+        pending.finally(() => {
+          refreshGraph()
+        })
+        pendingSyncRef.current = null
+      }
+      else {
+        refreshGraph()
+      }
+    }
+  }, [doSetViewType, refreshGraph, syncWorkflowDraftImmediately, viewType])
+
+  useEffect(() => {
+    if (!isSupportSandbox) {
+      collaborationManager.emitGraphViewActive(true)
+      return () => {
+        collaborationManager.emitGraphViewActive(false)
+      }
+    }
+
+    collaborationManager.emitGraphViewActive(viewType === ViewType.graph)
+    return () => {
+      collaborationManager.emitGraphViewActive(false)
+    }
+  }, [isSupportSandbox, viewType])
+
+  if (!isSupportSandbox)
+    return renderGraph(null)
+
+  const viewPicker = (
+    <ViewPicker
+      value={viewType}
+      onChange={handleViewTypeChange}
+      disabled={isResponding}
+    />
+  )
+  const viewPickerDock = (
+    <HeaderShell>
+      <div className="flex w-full items-center justify-between">
+        <div className="flex items-center gap-2">
+          {viewPicker}
+        </div>
+        <div className="flex items-center gap-2">
+          <OnlineUsers />
+        </div>
+      </div>
+    </HeaderShell>
+  )
+
+  return (
+    <div className="relative h-full w-full">
+      {viewType === ViewType.graph
+        ? (
+            isGraphRefreshing
+              ? (
+                  <>
+                    {viewPickerDock}
+                    <div className="relative flex h-full w-full items-center justify-center">
+                      <Loading />
+                    </div>
+                  </>
+                )
+              : renderGraph(viewPicker)
+          )
+        : (
+            <>
+              {viewPickerDock}
+              <SkillMain />
+            </>
+          )}
+    </div>
+  )
+}
 
 const WorkflowAppWithAdditionalContext = () => {
   const {
     data,
     isLoading,
     fileUploadConfigResponse,
+    reload,
   } = useWorkflowInit()
   const workflowStore = useWorkflowStore()
   const { isLoadingCurrentWorkspace, currentWorkspace } = useAppContext()
+  const notSupportMigration = true // wait for backend support
+  const [showMigrationModal, setShowMigrationModal] = useState(false)
+  const lastCheckedAppIdRef = useRef<string | null>(null)
 
   // Initialize trigger status at application level
   const { setTriggerStatuses } = useTriggerStatusStore()
   const appDetail = useAppStore(s => s.appDetail)
   const appId = appDetail?.id
+  const handleCloseMigrationModal = useCallback(() => {
+    setSandboxMigrationDismissed(appId)
+    setShowMigrationModal(false)
+  }, [appId])
   const isWorkflowMode = appDetail?.mode === AppModeEnum.WORKFLOW
   const { data: triggersResponse } = useAppTriggers(isWorkflowMode ? appId : undefined, {
     staleTime: 5 * 60 * 1000, // 5 minutes cache
@@ -82,16 +222,39 @@ const WorkflowAppWithAdditionalContext = () => {
     }
   }, [workflowStore])
 
+  const isSandboxRuntime = appDetail?.runtime_type === 'sandboxed'
+  const isSandboxFeatureEnabled = data?.features?.sandbox?.enabled === true
+  const isSandboxed = isSandboxRuntime || isSandboxFeatureEnabled
+
   const nodesData = useMemo(() => {
-    if (data)
-      return initialNodes(data.graph.nodes, data.graph.edges)
+    if (data) {
+      const processedNodes = initialNodes(data.graph.nodes, data.graph.edges)
+      const resolvedNodes = isSandboxed
+        ? processedNodes.map((node) => {
+            if (node.data.type !== BlockEnum.LLM)
+              return node
 
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                _iconTypeOverride: BlockEnum.Agent,
+              },
+            }
+          })
+        : processedNodes
+      collaborationManager.setNodes([], resolvedNodes)
+      return resolvedNodes
+    }
     return []
-  }, [data])
-  const edgesData = useMemo(() => {
-    if (data)
-      return initialEdges(data.graph.edges, data.graph.nodes)
+  }, [data, isSandboxed])
 
+  const edgesData = useMemo(() => {
+    if (data) {
+      const processedEdges = initialEdges(data.graph.edges, data.graph.nodes)
+      collaborationManager.setEdges([], processedEdges)
+      return processedEdges
+    }
     return []
   }, [data])
 
@@ -159,9 +322,36 @@ const WorkflowAppWithAdditionalContext = () => {
     })
   }, [replayRunId, workflowStore, getWorkflowRunAndTraceUrl])
 
-  if (!data || isLoading || isLoadingCurrentWorkspace || !currentWorkspace.id) {
+  const isDataReady = !(!data || isLoading || isLoadingCurrentWorkspace || !currentWorkspace.id)
+  const sandboxEnabled = isSandboxFeatureEnabled
+
+  useEffect(() => {
+    if (!isDataReady || !appId)
+      return
+    if (lastCheckedAppIdRef.current !== appId) {
+      lastCheckedAppIdRef.current = appId
+      const dismissed = getSandboxMigrationDismissed(appId)
+      // eslint-disable-next-line react-hooks-extra/no-direct-set-state-in-use-effect
+      setShowMigrationModal(!sandboxEnabled && !dismissed)
+    }
+  }, [appId, isDataReady, sandboxEnabled])
+  const renderGraph = useCallback((headerLeftSlot: ReactNode) => {
+    if (!isDataReady)
+      return null
+
     return (
-      <div className='relative flex h-full w-full items-center justify-center'>
+      <WorkflowAppMain
+        nodes={nodesData}
+        edges={edgesData}
+        viewport={data.graph.viewport}
+        headerLeftSlot={headerLeftSlot}
+      />
+    )
+  }, [isDataReady, nodesData, edgesData, data])
+
+  if (!isDataReady) {
+    return (
+      <div className="relative flex h-full w-full items-center justify-center">
         <Loading />
       </div>
     )
@@ -192,21 +382,28 @@ const WorkflowAppWithAdditionalContext = () => {
     text2speech: features.text_to_speech || { enabled: false },
     citation: features.retriever_resource || { enabled: false },
     moderation: features.sensitive_word_avoidance || { enabled: false },
+    sandbox: features.sandbox || { enabled: false },
   }
 
   return (
-    <WorkflowWithDefaultContext
-      edges={edgesData}
-      nodes={nodesData}
-    >
-      <FeaturesProvider features={initialFeatures}>
-        <WorkflowAppMain
-          nodes={nodesData}
-          edges={edgesData}
-          viewport={data.graph.viewport}
-        />
-      </FeaturesProvider>
-    </WorkflowWithDefaultContext>
+    <>
+      <CollaborationSession />
+      <SandboxMigrationModal
+        show={showMigrationModal && !notSupportMigration}
+        onClose={handleCloseMigrationModal}
+      />
+      <WorkflowWithDefaultContext
+        edges={edgesData}
+        nodes={nodesData}
+      >
+        <FeaturesProvider features={initialFeatures}>
+          <WorkflowViewContent
+            renderGraph={renderGraph}
+            reload={reload}
+          />
+        </FeaturesProvider>
+      </WorkflowWithDefaultContext>
+    </>
   )
 }
 

@@ -1,13 +1,20 @@
-import type { TypeWithI18N } from '@/app/components/header/account-setting/model-provider-page/declarations'
-import type { Annotation, MessageRating } from '@/models/log'
 import type { FileEntity } from '@/app/components/base/file-uploader/types'
+import type { TypeWithI18N } from '@/app/components/header/account-setting/model-provider-page/declarations'
 import type { InputVarType } from '@/app/components/workflow/types'
-import type { FileResponse } from '@/types/workflow'
+import type { Annotation, MessageRating } from '@/models/log'
+import type {
+  FileResponse,
+  HumanInputFilledFormData,
+  HumanInputFormData,
+  IconObject,
+  LLMGenerationItem,
+} from '@/types/workflow'
 
 export type MessageMore = {
   time: string
   tokens: number
   latency: number | string
+  tokens_per_second?: number | string
 }
 
 export type FeedbackType = {
@@ -63,6 +70,19 @@ export type CitationItem = {
   word_count: number
 }
 
+export type ExtraContent
+  = {
+    type: 'human_input'
+    submitted: false
+    form_definition: HumanInputFormData
+    workflow_run_id: string
+  }
+  | {
+    type: 'human_input'
+    submitted: true
+    form_submission_data: HumanInputFilledFormData
+  }
+
 export type IChatItem = {
   id: string
   content: string
@@ -91,7 +111,7 @@ export type IChatItem = {
   useCurrentUserAvatar?: boolean
   isOpeningStatement?: boolean
   suggestedQuestions?: string[]
-  log?: { role: string; text: string; files?: FileEntity[] }[]
+  log?: { role: string, text: string, files?: FileEntity[] }[]
   agent_thoughts?: ThoughtItem[]
   message_files?: FileEntity[]
   workflow_run_id?: string
@@ -103,6 +123,11 @@ export type IChatItem = {
   siblingIndex?: number
   prevSibling?: string
   nextSibling?: string
+  llmGenerationItems?: LLMGenerationItem[]
+  // for human input
+  humanInputFormDataList?: HumanInputFormData[]
+  humanInputFilledFormDataList?: HumanInputFilledFormData[]
+  extra_contents?: ExtraContent[]
 }
 
 export type Metadata = {
@@ -145,4 +170,40 @@ export type InputForm = {
   required: boolean
   hide: boolean
   [key: string]: any
+}
+
+export type ToolCallDetail = {
+  id: string
+  name: string
+  arguments: string
+  result: string
+  elapsed_time?: number
+  icon?: string | IconObject
+  icon_dark?: string | IconObject
+}
+export type SequenceSegment = | { type: 'content', start: number, end: number }
+  | { type: 'reasoning', index: number }
+  | { type: 'tool_call', index: number }
+
+export type GenerationDetail = {
+  reasoning_content?: string[]
+  tool_calls?: ToolCallDetail[]
+  sequence?: SequenceSegment[]
+}
+
+export type ChatMessageRes = {
+  id: string
+  parent_message_id?: string | null
+  workflow_run_id?: string
+  answer?: string
+  query: string
+  message_files: {
+    id: string
+    type: string
+    url: string
+    belongs_to: string
+  }[]
+  feedback?: FeedbackType
+  metadata?: Metadata
+  generation_detail?: GenerationDetail
 }

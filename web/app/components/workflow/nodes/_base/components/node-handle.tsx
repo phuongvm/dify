@@ -1,22 +1,20 @@
 import type { MouseEvent } from 'react'
+import type { PluginDefaultValue } from '../../../block-selector/types'
+import type { Node } from '../../../types'
 import {
   memo,
   useCallback,
   useEffect,
   useState,
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Handle,
   Position,
 } from 'reactflow'
-import { useTranslation } from 'react-i18next'
-import {
-  BlockEnum,
-  NodeRunningStatus,
-} from '../../../types'
-import type { Node } from '../../../types'
+import { useHooksStore } from '@/app/components/workflow/hooks-store'
+import { cn } from '@/utils/classnames'
 import BlockSelector from '../../../block-selector'
-import type { PluginDefaultValue } from '../../../block-selector/types'
 import {
   useAvailableBlocks,
   useIsChatMode,
@@ -27,7 +25,10 @@ import {
   useStore,
   useWorkflowStore,
 } from '../../../store'
-import cn from '@/utils/classnames'
+import {
+  BlockEnum,
+  NodeRunningStatus,
+} from '../../../types'
 
 type NodeHandleProps = {
   handleId: string
@@ -46,6 +47,8 @@ export const NodeTargetHandle = memo(({
   const [open, setOpen] = useState(false)
   const { handleNodeAdd } = useNodesInteractions()
   const { getNodesReadOnly } = useNodesReadOnly()
+  const interactionMode = useHooksStore(s => s.interactionMode)
+  const allowGraphActions = interactionMode !== 'subgraph'
   const connected = data._connectedTargetHandleIds?.includes(handleId)
   const { availablePrevBlocks } = useAvailableBlocks(data.type, data.isInIteration || data.isInLoop)
   const isConnectable = !!availablePrevBlocks.length
@@ -55,9 +58,9 @@ export const NodeTargetHandle = memo(({
   }, [])
   const handleHandleClick = useCallback((e: MouseEvent) => {
     e.stopPropagation()
-    if (!connected)
+    if (!connected && allowGraphActions)
       setOpen(v => !v)
-  }, [connected])
+  }, [allowGraphActions, connected])
   const handleSelect = useCallback((type: BlockEnum, pluginDefaultValue?: PluginDefaultValue) => {
     handleNodeAdd(
       {
@@ -75,7 +78,7 @@ export const NodeTargetHandle = memo(({
     <>
       <Handle
         id={handleId}
-        type='target'
+        type="target"
         position={Position.Left}
         className={cn(
           'z-[1] !h-4 !w-4 !rounded-none !border-none !bg-transparent !outline-none',
@@ -91,17 +94,17 @@ export const NodeTargetHandle = memo(({
             || data.type === BlockEnum.TriggerPlugin) && 'opacity-0',
           handleClassName,
         )}
-        isConnectable={isConnectable}
-        onClick={handleHandleClick}
+        isConnectable={allowGraphActions && isConnectable}
+        onClick={allowGraphActions ? handleHandleClick : undefined}
       >
         {
-          !connected && isConnectable && !getNodesReadOnly() && (
+          allowGraphActions && !connected && isConnectable && !getNodesReadOnly() && (
             <BlockSelector
               open={open}
               onOpenChange={handleOpenChange}
               onSelect={handleSelect}
               asChild
-              placement='left'
+              placement="left"
               triggerClassName={open => `
                 hidden absolute left-0 top-0 pointer-events-none
                 ${nodeSelectorClassName}
@@ -135,6 +138,8 @@ export const NodeSourceHandle = memo(({
   const [open, setOpen] = useState(false)
   const { handleNodeAdd } = useNodesInteractions()
   const { getNodesReadOnly } = useNodesReadOnly()
+  const interactionMode = useHooksStore(s => s.interactionMode)
+  const allowGraphActions = interactionMode !== 'subgraph'
   const { availableNextBlocks } = useAvailableBlocks(data.type, data.isInIteration || data.isInLoop)
   const isConnectable = !!availableNextBlocks.length
   const isChatMode = useIsChatMode()
@@ -145,8 +150,9 @@ export const NodeSourceHandle = memo(({
   }, [])
   const handleHandleClick = useCallback((e: MouseEvent) => {
     e.stopPropagation()
-    setOpen(v => !v)
-  }, [])
+    if (allowGraphActions)
+      setOpen(v => !v)
+  }, [allowGraphActions])
   const handleSelect = useCallback((type: BlockEnum, pluginDefaultValue?: PluginDefaultValue) => {
     handleNodeAdd(
       {
@@ -161,7 +167,7 @@ export const NodeSourceHandle = memo(({
   }, [handleNodeAdd, id, handleId])
 
   useEffect(() => {
-    if (!shouldAutoOpenStartNodeSelector)
+    if (!shouldAutoOpenStartNodeSelector || !allowGraphActions)
       return
 
     if (isChatMode) {
@@ -186,7 +192,7 @@ export const NodeSourceHandle = memo(({
   return (
     <Handle
       id={handleId}
-      type='source'
+      type="source"
       position={Position.Right}
       className={cn(
         'group/handle z-[1] !h-4 !w-4 !rounded-none !border-none !bg-transparent !outline-none',
@@ -198,23 +204,23 @@ export const NodeSourceHandle = memo(({
         !connected && 'after:opacity-0',
         handleClassName,
       )}
-      isConnectable={isConnectable}
-      onClick={handleHandleClick}
+      isConnectable={allowGraphActions && isConnectable}
+      onClick={allowGraphActions ? handleHandleClick : undefined}
     >
-      <div className='absolute -top-1 left-1/2 hidden -translate-x-1/2 -translate-y-full rounded-lg border-[0.5px] border-components-panel-border bg-components-tooltip-bg p-1.5 shadow-lg group-hover/handle:block'>
-        <div className='system-xs-regular text-text-tertiary'>
-          <div className=' whitespace-nowrap'>
-            <span className='system-xs-medium text-text-secondary'>{t('workflow.common.parallelTip.click.title')}</span>
-            {t('workflow.common.parallelTip.click.desc')}
+      <div className="absolute -top-1 left-1/2 hidden -translate-x-1/2 -translate-y-full rounded-lg border-[0.5px] border-components-panel-border bg-components-tooltip-bg p-1.5 shadow-lg group-hover/handle:block">
+        <div className="text-text-tertiary system-xs-regular">
+          <div className="whitespace-nowrap">
+            <span className="text-text-secondary system-xs-medium">{t('common.parallelTip.click.title', { ns: 'workflow' })}</span>
+            {t('common.parallelTip.click.desc', { ns: 'workflow' })}
           </div>
           <div>
-            <span className='system-xs-medium text-text-secondary'>{t('workflow.common.parallelTip.drag.title')}</span>
-            {t('workflow.common.parallelTip.drag.desc')}
+            <span className="text-text-secondary system-xs-medium">{t('common.parallelTip.drag.title', { ns: 'workflow' })}</span>
+            {t('common.parallelTip.drag.desc', { ns: 'workflow' })}
           </div>
         </div>
       </div>
       {
-        isConnectable && !getNodesReadOnly() && (
+        allowGraphActions && isConnectable && !getNodesReadOnly() && (
           <BlockSelector
             open={open}
             onOpenChange={handleOpenChange}

@@ -1,10 +1,9 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-} from 'react'
-import { useTranslation } from 'react-i18next'
-import { useEdges, useStoreApi } from 'reactflow'
+import type { AgentNodeType } from '../nodes/agent/types'
+import type { DataSourceNodeType } from '../nodes/data-source/types'
+import type { KnowledgeBaseNodeType } from '../nodes/knowledge-base/types'
+import type { KnowledgeRetrievalNodeType } from '../nodes/knowledge-retrieval/types'
+import type { ToolNodeType } from '../nodes/tool/types'
+import type { PluginTriggerNodeType } from '../nodes/trigger-plugin/types'
 import type {
   CommonEdgeType,
   CommonNodeType,
@@ -12,51 +11,55 @@ import type {
   Node,
   ValueSelector,
 } from '../types'
-import { BlockEnum } from '../types'
+import type { Emoji } from '@/app/components/tools/types'
+import type { DataSet } from '@/models/datasets'
+import type { I18nKeysWithPrefix } from '@/types/i18n'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react'
+import { useTranslation } from 'react-i18next'
+import { useEdges, useStoreApi } from 'reactflow'
+import { useStore as useAppStore } from '@/app/components/app/store'
+import { useToastContext } from '@/app/components/base/toast'
+import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import { useModelList } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import useNodes from '@/app/components/workflow/store/workflow/use-nodes'
+import { MAX_TREE_DEPTH } from '@/config'
+import { useGetLanguage } from '@/context/i18n'
+import { fetchDatasets } from '@/service/datasets'
+import { useStrategyProviders } from '@/service/use-strategy'
+import {
+  useAllBuiltInTools,
+  useAllCustomTools,
+  useAllMCPTools,
+  useAllWorkflowTools,
+} from '@/service/use-tools'
+import { useAllTriggerPlugins } from '@/service/use-triggers'
+import { AppModeEnum } from '@/types/app'
+import {
+  CUSTOM_NODE,
+} from '../constants'
+import { useDatasetsDetailStore } from '../datasets-detail-store/store'
+import {
+  useGetToolIcon,
+  useNodesMetaData,
+} from '../hooks'
+import { getNodeUsedVars, isValueSelectorInNodeOutputVars } from '../nodes/_base/components/variable/utils'
 import {
   useStore,
   useWorkflowStore,
 } from '../store'
+import { BlockEnum } from '../types'
 import {
   getDataSourceCheckParams,
   getToolCheckParams,
   getValidTreeNodes,
 } from '../utils'
+import { isNodePluginMissing, PLUGIN_DEPENDENT_TYPES } from '../utils/plugin-install-check'
 import { getTriggerCheckParams } from '../utils/trigger'
-import {
-  CUSTOM_NODE,
-} from '../constants'
-import {
-  useGetToolIcon,
-  useNodesMetaData,
-} from '../hooks'
-import type { ToolNodeType } from '../nodes/tool/types'
-import type { DataSourceNodeType } from '../nodes/data-source/types'
-import type { PluginTriggerNodeType } from '../nodes/trigger-plugin/types'
-import { useToastContext } from '@/app/components/base/toast'
-import { useGetLanguage } from '@/context/i18n'
-import type { AgentNodeType } from '../nodes/agent/types'
-import { useStrategyProviders } from '@/service/use-strategy'
-import { useAllTriggerPlugins } from '@/service/use-triggers'
-import { useDatasetsDetailStore } from '../datasets-detail-store/store'
-import type { KnowledgeRetrievalNodeType } from '../nodes/knowledge-retrieval/types'
-import type { DataSet } from '@/models/datasets'
-import { fetchDatasets } from '@/service/datasets'
-import { MAX_TREE_DEPTH } from '@/config'
 import useNodesAvailableVarList, { useGetNodesAvailableVarList } from './use-nodes-available-var-list'
-import { getNodeUsedVars, isSpecialVar } from '../nodes/_base/components/variable/utils'
-import type { Emoji } from '@/app/components/tools/types'
-import { useModelList } from '@/app/components/header/account-setting/model-provider-page/hooks'
-import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
-import type { KnowledgeBaseNodeType } from '../nodes/knowledge-base/types'
-import {
-  useAllBuiltInTools,
-  useAllCustomTools,
-  useAllWorkflowTools,
-} from '@/service/use-tools'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import { AppModeEnum } from '@/types/app'
-import useNodes from '@/app/components/workflow/store/workflow/use-nodes'
 
 export type ChecklistItem = {
   id: string
@@ -66,6 +69,7 @@ export type ChecklistItem = {
   unConnected?: boolean
   errorMessage?: string
   canNavigate: boolean
+  disableGoTo?: boolean
 }
 
 const START_NODE_TYPES: BlockEnum[] = [
@@ -82,6 +86,7 @@ export const useChecklist = (nodes: Node[], edges: Edge[]) => {
   const { data: buildInTools } = useAllBuiltInTools()
   const { data: customTools } = useAllCustomTools()
   const { data: workflowTools } = useAllWorkflowTools()
+  const { data: mcpTools } = useAllMCPTools()
   const dataSourceList = useStore(s => s.dataSourceList)
   const { data: strategyProviders } = useStrategyProviders()
   const { data: triggerPlugins } = useAllTriggerPlugins()
@@ -157,31 +162,40 @@ export const useChecklist = (nodes: Node[], edges: Edge[]) => {
       if (node.type === CUSTOM_NODE) {
         const checkData = getCheckData(node.data)
         const validator = nodesExtraData?.[node.data.type as BlockEnum]?.checkValid
-        let errorMessage = validator ? validator(checkData, t, moreDataForCheckValid).errorMessage : undefined
+        const pluginInstallLocked = (node.data as { _pluginInstallLocked?: boolean })._pluginInstallLocked
+        const isPluginMissing = (
+          PLUGIN_DEPENDENT_TYPES.includes(node.data.type as BlockEnum)
+          && pluginInstallLocked
+        ) || isNodePluginMissing(node.data, {
+          builtInTools: buildInTools,
+          customTools,
+          workflowTools,
+          mcpTools,
+          triggerPlugins,
+          dataSourceList,
+        })
+
+        // Check if plugin is installed for plugin-dependent nodes first
+        let errorMessage: string | undefined
+        if (isPluginMissing)
+          errorMessage = t('nodes.common.pluginNotInstalled', { ns: 'workflow' })
+        else if (validator)
+          errorMessage = validator(checkData, t, moreDataForCheckValid).errorMessage
 
         if (!errorMessage) {
           const availableVars = map[node.id].availableVars
 
           for (const variable of usedVars) {
-            const isSpecialVars = isSpecialVar(variable[0])
-            if (!isSpecialVars) {
-              const usedNode = availableVars.find(v => v.nodeId === variable?.[0])
-              if (usedNode) {
-                const usedVar = usedNode.vars.find(v => v.variable === variable?.[1])
-                if (!usedVar)
-                  errorMessage = t('workflow.errorMsg.invalidVariable')
-              }
-              else {
-                errorMessage = t('workflow.errorMsg.invalidVariable')
-              }
-            }
+            if (!isValueSelectorInNodeOutputVars(variable, availableVars))
+              errorMessage = t('errorMsg.invalidVariable', { ns: 'workflow' })
           }
         }
 
         // Start nodes and Trigger nodes should not show unConnected error if they have validation errors
         // or if they are valid start nodes (even without incoming connections)
         const isStartNodeMeta = nodesExtraData?.[node.data.type as BlockEnum]?.metaData.isStart ?? false
-        const canSkipConnectionCheck = shouldCheckStartNode ? isStartNodeMeta : true
+        const isSubGraphNode = Boolean((node.data as { parent_node_id?: string }).parent_node_id)
+        const canSkipConnectionCheck = isSubGraphNode || (shouldCheckStartNode ? isStartNodeMeta : true)
 
         const isUnconnected = !validNodes.find(n => n.id === node.id)
         const shouldShowError = errorMessage || (isUnconnected && !canSkipConnectionCheck)
@@ -194,7 +208,8 @@ export const useChecklist = (nodes: Node[], edges: Edge[]) => {
             toolIcon,
             unConnected: isUnconnected && !canSkipConnectionCheck,
             errorMessage,
-            canNavigate: true,
+            canNavigate: !isPluginMissing,
+            disableGoTo: isPluginMissing,
           })
         }
       }
@@ -207,8 +222,8 @@ export const useChecklist = (nodes: Node[], edges: Edge[]) => {
         list.push({
           id: 'start-node-required',
           type: BlockEnum.Start,
-          title: t('workflow.panel.startNode'),
-          errorMessage: t('workflow.common.needStartNode'),
+          title: t('panel.startNode', { ns: 'workflow' }),
+          errorMessage: t('common.needStartNode', { ns: 'workflow' }),
           canNavigate: false,
         })
       }
@@ -221,15 +236,18 @@ export const useChecklist = (nodes: Node[], edges: Edge[]) => {
         list.push({
           id: `${type}-need-added`,
           type,
-          title: t(`workflow.blocks.${type}`),
-          errorMessage: t('workflow.common.needAdd', { node: t(`workflow.blocks.${type}`) }),
+          // We don't have enough type info for t() here
+
+          title: t(`blocks.${type}` as I18nKeysWithPrefix<'workflow', 'blocks.'>, { ns: 'workflow' }),
+
+          errorMessage: t('common.needAdd', { ns: 'workflow', node: t(`blocks.${type}` as I18nKeysWithPrefix<'workflow', 'blocks.'>, { ns: 'workflow' }) }),
           canNavigate: false,
         })
       }
     })
 
     return list
-  }, [nodes, nodesExtraData, edges, buildInTools, customTools, workflowTools, language, dataSourceList, getToolIcon, strategyProviders, getCheckData, t, map, shouldCheckStartNode])
+  }, [nodes, nodesExtraData, edges, buildInTools, customTools, workflowTools, mcpTools, language, dataSourceList, getToolIcon, strategyProviders, triggerPlugins, getCheckData, t, map, shouldCheckStartNode])
 
   return needWarningNodes
 }
@@ -294,7 +312,7 @@ export const useChecklistBeforePublish = () => {
     const { validNodes, maxDepth } = getValidTreeNodes(filteredNodes, edges)
 
     if (maxDepth > MAX_TREE_DEPTH) {
-      notify({ type: 'error', message: t('workflow.common.maxTreeDepth', { depth: MAX_TREE_DEPTH }) })
+      notify({ type: 'error', message: t('common.maxTreeDepth', { ns: 'workflow', depth: MAX_TREE_DEPTH }) })
       return false
     }
     // Before publish, we need to fetch datasets detail, in case of the settings of datasets have been changed
@@ -342,7 +360,10 @@ export const useChecklistBeforePublish = () => {
         usedVars = getNodeUsedVars(node).filter(v => v.length > 0)
       }
       const checkData = getCheckData(node.data, datasets)
-      const { errorMessage } = nodesExtraData![node.data.type as BlockEnum].checkValid(checkData, t, moreDataForCheckValid)
+      const nodeMetaData = nodesExtraData?.[node.data.type as BlockEnum]
+      if (!nodeMetaData)
+        continue
+      const { errorMessage } = nodeMetaData.checkValid(checkData, t, moreDataForCheckValid)
 
       if (errorMessage) {
         notify({ type: 'error', message: `[${node.data.title}] ${errorMessage}` })
@@ -352,29 +373,19 @@ export const useChecklistBeforePublish = () => {
       const availableVars = map[node.id].availableVars
 
       for (const variable of usedVars) {
-        const isSpecialVars = isSpecialVar(variable[0])
-        if (!isSpecialVars) {
-          const usedNode = availableVars.find(v => v.nodeId === variable?.[0])
-          if (usedNode) {
-            const usedVar = usedNode.vars.find(v => v.variable === variable?.[1])
-            if (!usedVar) {
-              notify({ type: 'error', message: `[${node.data.title}] ${t('workflow.errorMsg.invalidVariable')}` })
-              return false
-            }
-          }
-          else {
-            notify({ type: 'error', message: `[${node.data.title}] ${t('workflow.errorMsg.invalidVariable')}` })
-            return false
-          }
+        if (!isValueSelectorInNodeOutputVars(variable, availableVars)) {
+          notify({ type: 'error', message: `[${node.data.title}] ${t('errorMsg.invalidVariable', { ns: 'workflow' })}` })
+          return false
         }
       }
 
       const isStartNodeMeta = nodesExtraData?.[node.data.type as BlockEnum]?.metaData.isStart ?? false
-      const canSkipConnectionCheck = shouldCheckStartNode ? isStartNodeMeta : true
+      const isSubGraphNode = Boolean((node.data as { parent_node_id?: string }).parent_node_id)
+      const canSkipConnectionCheck = isSubGraphNode || (shouldCheckStartNode ? isStartNodeMeta : true)
       const isUnconnected = !validNodes.find(n => n.id === node.id)
 
       if (isUnconnected && !canSkipConnectionCheck) {
-        notify({ type: 'error', message: `[${node.data.title}] ${t('workflow.common.needConnectTip')}` })
+        notify({ type: 'error', message: `[${node.data.title}] ${t('common.needConnectTip', { ns: 'workflow' })}` })
         return false
       }
     }
@@ -382,7 +393,7 @@ export const useChecklistBeforePublish = () => {
     if (shouldCheckStartNode) {
       const startNodesFiltered = nodes.filter(node => START_NODE_TYPES.includes(node.data.type as BlockEnum))
       if (startNodesFiltered.length === 0) {
-        notify({ type: 'error', message: t('workflow.common.needStartNode') })
+        notify({ type: 'error', message: t('common.needStartNode', { ns: 'workflow' }) })
         return false
       }
     }
@@ -393,13 +404,13 @@ export const useChecklistBeforePublish = () => {
       const type = isRequiredNodesType[i]
 
       if (!filteredNodes.find(node => node.data.type === type)) {
-        notify({ type: 'error', message: t('workflow.common.needAdd', { node: t(`workflow.blocks.${type}`) }) })
+        notify({ type: 'error', message: t('common.needAdd', { ns: 'workflow', node: t(`blocks.${type}` as I18nKeysWithPrefix<'workflow', 'blocks.'>, { ns: 'workflow' }) }) })
         return false
       }
     }
 
     return true
-  }, [store, notify, t, language, nodesExtraData, strategyProviders, updateDatasetsDetail, getCheckData, workflowStore, buildInTools, customTools, workflowTools, shouldCheckStartNode])
+  }, [store, workflowStore, getNodesAvailableVarList, shouldCheckStartNode, nodesExtraData, notify, t, updateDatasetsDetail, buildInTools, customTools, workflowTools, language, getCheckData, strategyProviders])
 
   return {
     handleCheckBeforePublish,
@@ -415,7 +426,7 @@ export const useWorkflowRunValidation = () => {
 
   const validateBeforeRun = useCallback(() => {
     if (needWarningNodes.length > 0) {
-      notify({ type: 'error', message: t('workflow.panel.checklistTip') })
+      notify({ type: 'error', message: t('panel.checklistTip', { ns: 'workflow' }) })
       return false
     }
     return true

@@ -1,8 +1,8 @@
+import type { WorkflowDataUpdater } from '@/app/components/workflow/types'
 import { useCallback } from 'react'
+import { useWorkflowUpdate } from '@/app/components/workflow/hooks'
 import { useWorkflowStore } from '@/app/components/workflow/store'
 import { fetchWorkflowDraft } from '@/service/workflow'
-import type { WorkflowDataUpdater } from '@/app/components/workflow/types'
-import { useWorkflowUpdate } from '@/app/components/workflow/hooks'
 
 export const useWorkflowRefreshDraft = () => {
   const workflowStore = useWorkflowStore()
@@ -21,8 +21,9 @@ export const useWorkflowRefreshDraft = () => {
       debouncedSyncWorkflowDraft,
     } = workflowStore.getState()
 
-    if (debouncedSyncWorkflowDraft && typeof (debouncedSyncWorkflowDraft as any).cancel === 'function')
-      (debouncedSyncWorkflowDraft as any).cancel()
+    const { cancel } = debouncedSyncWorkflowDraft
+    if (typeof cancel === 'function')
+      cancel()
 
     const wasLoaded = isWorkflowDataLoaded
     if (wasLoaded)

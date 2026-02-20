@@ -1,20 +1,4 @@
-import {
-  useCallback,
-  useRef,
-} from 'react'
-import { produce } from 'immer'
-import { v4 as uuid4 } from 'uuid'
-import {
-  useIsChatMode,
-  useNodesReadOnly,
-  useWorkflow,
-} from '../../hooks'
-import { ValueType, VarType } from '../../types'
 import type { ErrorHandleMode, Var } from '../../types'
-import useNodeCrud from '../_base/hooks/use-node-crud'
-import { toNodeOutputVars } from '../_base/components/variable/utils'
-import { getOperators } from './utils'
-import { LogicalOperator } from './types'
 import type {
   HandleAddCondition,
   HandleAddSubVariableCondition,
@@ -25,7 +9,13 @@ import type {
   HandleUpdateSubVariableCondition,
   LoopNodeType,
 } from './types'
-import useIsVarFileAttribute from './use-is-var-file-attribute'
+import { produce } from 'immer'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+} from 'react'
+import { v4 as uuid4 } from 'uuid'
 import { useStore } from '@/app/components/workflow/store'
 import {
   useAllBuiltInTools,
@@ -33,6 +23,17 @@ import {
   useAllMCPTools,
   useAllWorkflowTools,
 } from '@/service/use-tools'
+import {
+  useIsChatMode,
+  useNodesReadOnly,
+  useWorkflow,
+} from '../../hooks'
+import { ValueType, VarType } from '../../types'
+import { toNodeOutputVars } from '../_base/components/variable/utils'
+import useNodeCrud from '../_base/hooks/use-node-crud'
+import { LogicalOperator } from './types'
+import useIsVarFileAttribute from './use-is-var-file-attribute'
+import { getOperators } from './utils'
 
 const useConfig = (id: string, payload: LoopNodeType) => {
   const { nodesReadOnly: readOnly } = useNodesReadOnly()
@@ -41,6 +42,9 @@ const useConfig = (id: string, payload: LoopNodeType) => {
 
   const { inputs, setInputs } = useNodeCrud<LoopNodeType>(id, payload)
   const inputsRef = useRef(inputs)
+  useEffect(() => {
+    inputsRef.current = inputs
+  }, [inputs])
   const handleInputsChange = useCallback((newInputs: LoopNodeType) => {
     inputsRef.current = newInputs
     setInputs(newInputs)

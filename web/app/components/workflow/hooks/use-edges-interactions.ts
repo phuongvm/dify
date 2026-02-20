@@ -1,74 +1,67 @@
-import { useCallback } from 'react'
-import { produce } from 'immer'
 import type {
+  Edge,
   EdgeMouseHandler,
   OnEdgesChange,
-} from 'reactflow'
-import {
-  useStoreApi,
 } from 'reactflow'
 import type {
   Node,
 } from '../types'
+import { produce } from 'immer'
+import { useCallback } from 'react'
+import { BlockEnum } from '../types'
 import { getNodesConnectedSourceOrTargetHandleIdsMap } from '../utils'
+import { useCollaborativeWorkflow } from './use-collaborative-workflow'
 import { useNodesSyncDraft } from './use-nodes-sync-draft'
 import { useNodesReadOnly } from './use-workflow'
-import { WorkflowHistoryEvent, useWorkflowHistory } from './use-workflow-history'
+import { useWorkflowHistory, WorkflowHistoryEvent } from './use-workflow-history'
 
 export const useEdgesInteractions = () => {
-  const store = useStoreApi()
   const { handleSyncWorkflowDraft } = useNodesSyncDraft()
   const { getNodesReadOnly } = useNodesReadOnly()
   const { saveStateToHistory } = useWorkflowHistory()
+  const collaborativeWorkflow = useCollaborativeWorkflow()
 
   const handleEdgeEnter = useCallback<EdgeMouseHandler>((_, edge) => {
     if (getNodesReadOnly())
       return
 
-    const {
-      edges,
-      setEdges,
-    } = store.getState()
+    const { edges, setEdges } = collaborativeWorkflow.getState()
     const newEdges = produce(edges, (draft) => {
       const currentEdge = draft.find(e => e.id === edge.id)!
 
       currentEdge.data._hovering = true
     })
-    setEdges(newEdges)
-  }, [store, getNodesReadOnly])
+    setEdges(newEdges, false)
+  }, [collaborativeWorkflow, getNodesReadOnly])
 
   const handleEdgeLeave = useCallback<EdgeMouseHandler>((_, edge) => {
     if (getNodesReadOnly())
       return
 
-    const {
-      edges,
-      setEdges,
-    } = store.getState()
+    const { edges, setEdges } = collaborativeWorkflow.getState()
     const newEdges = produce(edges, (draft) => {
       const currentEdge = draft.find(e => e.id === edge.id)!
 
       currentEdge.data._hovering = false
     })
-    setEdges(newEdges)
-  }, [store, getNodesReadOnly])
+    setEdges(newEdges, false)
+  }, [collaborativeWorkflow, getNodesReadOnly])
 
   const handleEdgeDeleteByDeleteBranch = useCallback((nodeId: string, branchId: string) => {
     if (getNodesReadOnly())
       return
 
     const {
-      getNodes,
+      nodes,
       setNodes,
       edges,
       setEdges,
-    } = store.getState()
+    } = collaborativeWorkflow.getState()
     const edgeWillBeDeleted = edges.filter(edge => edge.source === nodeId && edge.sourceHandle === branchId)
 
     if (!edgeWillBeDeleted.length)
       return
 
-    const nodes = getNodes()
     const nodesConnectedSourceOrTargetHandleIdsMap = getNodesConnectedSourceOrTargetHandleIdsMap(
       edgeWillBeDeleted.map(edge => ({ type: 'remove', edge })),
       nodes,
@@ -90,24 +83,67 @@ export const useEdgesInteractions = () => {
     setEdges(newEdges)
     handleSyncWorkflowDraft()
     saveStateToHistory(WorkflowHistoryEvent.EdgeDeleteByDeleteBranch)
-  }, [getNodesReadOnly, store, handleSyncWorkflowDraft, saveStateToHistory])
+  }, [getNodesReadOnly, collaborativeWorkflow, handleSyncWorkflowDraft, saveStateToHistory])
 
   const handleEdgeDelete = useCallback(() => {
     if (getNodesReadOnly())
       return
 
     const {
-      getNodes,
+      nodes,
       setNodes,
       edges,
       setEdges,
-    } = store.getState()
+    } = collaborativeWorkflow.getState()
     const currentEdgeIndex = edges.findIndex(edge => edge.selected)
 
     if (currentEdgeIndex < 0)
       return
     const currentEdge = edges[currentEdgeIndex]
-    const nodes = getNodes()
+
+    // collect edges to delete (including corresponding real edges for temp edges)
+    const edgesToDelete: Set<string> = new Set([currentEdge.id])
+
+    // if deleting a temp edge connected to a group, also delete the corresponding real hidden edge
+    if (currentEdge.data?._isTemp) {
+      const groupNode = nodes.find(n =>
+        n.data.type === BlockEnum.Group
+        && (n.id === currentEdge.source || n.id === currentEdge.target),
+      )
+
+      if (groupNode) {
+        const memberIds = new Set((groupNode.data.members || []).map((m: { id: string }) => m.id))
+
+        if (currentEdge.target === groupNode.id) {
+          // inbound temp edge: find real edge with same source, target is a head node
+          edges.forEach((edge) => {
+            if (edge.source === currentEdge.source
+              && memberIds.has(edge.target)
+              && edge.sourceHandle === currentEdge.sourceHandle) {
+              edgesToDelete.add(edge.id)
+            }
+          })
+        }
+        else if (currentEdge.source === groupNode.id) {
+          // outbound temp edge: sourceHandle format is "leafNodeId-originalHandle"
+          const sourceHandle = currentEdge.sourceHandle || ''
+          const lastDashIndex = sourceHandle.lastIndexOf('-')
+          if (lastDashIndex > 0) {
+            const leafNodeId = sourceHandle.substring(0, lastDashIndex)
+            const originalHandle = sourceHandle.substring(lastDashIndex + 1)
+
+            edges.forEach((edge) => {
+              if (edge.source === leafNodeId
+                && edge.target === currentEdge.target
+                && (edge.sourceHandle || 'source') === originalHandle) {
+                edgesToDelete.add(edge.id)
+              }
+            })
+          }
+        }
+      }
+    }
+
     const nodesConnectedSourceOrTargetHandleIdsMap = getNodesConnectedSourceOrTargetHandleIdsMap(
       [
         { type: 'remove', edge: currentEdge },
@@ -126,12 +162,15 @@ export const useEdgesInteractions = () => {
     })
     setNodes(newNodes)
     const newEdges = produce(edges, (draft) => {
-      draft.splice(currentEdgeIndex, 1)
+      for (let i = draft.length - 1; i >= 0; i--) {
+        if (edgesToDelete.has(draft[i].id))
+          draft.splice(i, 1)
+      }
     })
     setEdges(newEdges)
     handleSyncWorkflowDraft()
     saveStateToHistory(WorkflowHistoryEvent.EdgeDelete)
-  }, [getNodesReadOnly, store, handleSyncWorkflowDraft, saveStateToHistory])
+  }, [getNodesReadOnly, collaborativeWorkflow, handleSyncWorkflowDraft, saveStateToHistory])
 
   const handleEdgesChange = useCallback<OnEdgesChange>((changes) => {
     if (getNodesReadOnly())
@@ -140,7 +179,7 @@ export const useEdgesInteractions = () => {
     const {
       edges,
       setEdges,
-    } = store.getState()
+    } = collaborativeWorkflow.getState()
 
     const newEdges = produce(edges, (draft) => {
       changes.forEach((change) => {
@@ -149,7 +188,64 @@ export const useEdgesInteractions = () => {
       })
     })
     setEdges(newEdges)
-  }, [store, getNodesReadOnly])
+  }, [collaborativeWorkflow, getNodesReadOnly])
+
+  const handleEdgeSourceHandleChange = useCallback((nodeId: string, oldHandleId: string, newHandleId: string) => {
+    if (getNodesReadOnly())
+      return
+
+    const {
+      nodes,
+      setNodes,
+      edges,
+      setEdges,
+    } = collaborativeWorkflow.getState()
+
+    // Find edges connected to the old handle
+    const affectedEdges = edges.filter(
+      (edge: Edge) => edge.source === nodeId && edge.sourceHandle === oldHandleId,
+    )
+
+    if (affectedEdges.length === 0)
+      return
+
+    // Update node metadata: remove old handle, add new handle
+    const nodesConnectedSourceOrTargetHandleIdsMap = getNodesConnectedSourceOrTargetHandleIdsMap(
+      [
+        ...affectedEdges.map((edge: Edge) => ({ type: 'remove', edge })),
+        ...affectedEdges.map((edge: Edge) => ({
+          type: 'add',
+          edge: { ...edge, sourceHandle: newHandleId },
+        })),
+      ],
+      nodes,
+    )
+
+    const newNodes = produce(nodes, (draft: Node[]) => {
+      draft.forEach((node) => {
+        if (nodesConnectedSourceOrTargetHandleIdsMap[node.id]) {
+          node.data = {
+            ...node.data,
+            ...nodesConnectedSourceOrTargetHandleIdsMap[node.id],
+          }
+        }
+      })
+    })
+    setNodes(newNodes)
+
+    // Update edges to use new sourceHandle and regenerate edge IDs
+    const newEdges = produce(edges, (draft: Edge[]) => {
+      draft.forEach((edge: Edge) => {
+        if (edge.source === nodeId && edge.sourceHandle === oldHandleId) {
+          edge.sourceHandle = newHandleId
+          edge.id = `${edge.source}-${newHandleId}-${edge.target}-${edge.targetHandle}`
+        }
+      })
+    })
+    setEdges(newEdges)
+    handleSyncWorkflowDraft()
+    saveStateToHistory(WorkflowHistoryEvent.EdgeSourceHandleChange)
+  }, [getNodesReadOnly, collaborativeWorkflow, handleSyncWorkflowDraft, saveStateToHistory])
 
   return {
     handleEdgeEnter,
@@ -157,5 +253,6 @@ export const useEdgesInteractions = () => {
     handleEdgeDeleteByDeleteBranch,
     handleEdgeDelete,
     handleEdgesChange,
+    handleEdgeSourceHandleChange,
   }
 }

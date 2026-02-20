@@ -1,24 +1,28 @@
-import React, { type FC, useCallback, useEffect, useState } from 'react'
+import type { FC } from 'react'
 import type { SchemaRoot } from '../../../types'
+import type { FormValue } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import type { CompletionParams, Model } from '@/types/app'
+import * as React from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   PortalToFollowElem,
   PortalToFollowElemContent,
   PortalToFollowElemTrigger,
 } from '@/app/components/base/portal-to-follow-elem'
-import useTheme from '@/hooks/use-theme'
-import type { CompletionParams, Model } from '@/types/app'
-import { ModelModeType } from '@/types/app'
-import { Theme } from '@/types/app'
-import { SchemaGeneratorDark, SchemaGeneratorLight } from './assets'
-import cn from '@/utils/classnames'
-import PromptEditor from './prompt-editor'
-import GeneratedResult from './generated-result'
-import { useGenerateStructuredOutputRules } from '@/service/use-common'
 import Toast from '@/app/components/base/toast'
-import { type FormValue, ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
 import { useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
-import { useVisualEditorStore } from '../visual-editor/store'
+import { STORAGE_KEYS } from '@/config/storage-keys'
+import useTheme from '@/hooks/use-theme'
+import { useGenerateStructuredOutputRules } from '@/service/use-common'
+import { ModelModeType, Theme } from '@/types/app'
+import { cn } from '@/utils/classnames'
+import { storage } from '@/utils/storage'
 import { useMittContext } from '../visual-editor/context'
+import { useVisualEditorStore } from '../visual-editor/store'
+import { SchemaGeneratorDark, SchemaGeneratorLight } from './assets'
+import GeneratedResult from './generated-result'
+import PromptEditor from './prompt-editor'
 
 type JsonSchemaGeneratorProps = {
   onApply: (schema: SchemaRoot) => void
@@ -34,9 +38,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
   onApply,
   crossAxisOffset,
 }) => {
-  const localModel = localStorage.getItem('auto-gen-model')
-    ? JSON.parse(localStorage.getItem('auto-gen-model') as string) as Model
-    : null
+  const localModel = storage.get<Model>(STORAGE_KEYS.LOCAL.GENERATOR.AUTO_GEN_MODEL)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState(GeneratorView.promptEditor)
   const [model, setModel] = useState<Model>(localModel || {
@@ -58,9 +60,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
 
   useEffect(() => {
     if (defaultModel) {
-      const localModel = localStorage.getItem('auto-gen-model')
-        ? JSON.parse(localStorage.getItem('auto-gen-model') || '')
-        : null
+      const localModel = storage.get<Model>(STORAGE_KEYS.LOCAL.GENERATOR.AUTO_GEN_MODEL)
       if (localModel) {
         setModel(localModel)
       }
@@ -85,7 +85,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
     setOpen(false)
   }, [])
 
-  const handleModelChange = useCallback((newValue: { modelId: string; provider: string; mode?: string; features?: string[] }) => {
+  const handleModelChange = useCallback((newValue: { modelId: string, provider: string, mode?: string, features?: string[] }) => {
     const newModel = {
       ...model,
       provider: newValue.provider,
@@ -93,7 +93,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
       mode: newValue.mode as ModelModeType,
     }
     setModel(newModel)
-    localStorage.setItem('auto-gen-model', JSON.stringify(newModel))
+    storage.set(STORAGE_KEYS.LOCAL.GENERATOR.AUTO_GEN_MODEL, newModel)
   }, [model, setModel])
 
   const handleCompletionParamsChange = useCallback((newParams: FormValue) => {
@@ -102,7 +102,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
       completion_params: newParams as CompletionParams,
     }
     setModel(newModel)
-    localStorage.setItem('auto-gen-model', JSON.stringify(newModel))
+    storage.set(STORAGE_KEYS.LOCAL.GENERATOR.AUTO_GEN_MODEL, newModel)
   }, [model, setModel])
 
   const { mutateAsync: generateStructuredOutputRules, isPending: isGenerating } = useGenerateStructuredOutputRules()
@@ -124,7 +124,8 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
   const handleGenerate = useCallback(async () => {
     setView(GeneratorView.result)
     const output = await generateSchema()
-    if (output === undefined) return
+    if (output === undefined)
+      return
     setSchema(JSON.parse(output))
   }, [generateSchema])
 
@@ -134,7 +135,8 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
 
   const handleRegenerate = useCallback(async () => {
     const output = await generateSchema()
-    if (output === undefined) return
+    if (output === undefined)
+      return
     setSchema(JSON.parse(output))
   }, [generateSchema])
 
@@ -147,7 +149,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
     <PortalToFollowElem
       open={open}
       onOpenChange={setOpen}
-      placement='bottom-end'
+      placement="bottom-end"
       offset={{
         mainAxis: 4,
         crossAxis: crossAxisOffset ?? 0,
@@ -155,7 +157,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
     >
       <PortalToFollowElemTrigger onClick={handleTrigger}>
         <button
-          type='button'
+          type="button"
           className={cn(
             'flex h-6 w-6 items-center justify-center rounded-md p-0.5 hover:bg-state-accent-hover',
             open && 'bg-state-accent-active',
@@ -164,7 +166,7 @@ const JsonSchemaGenerator: FC<JsonSchemaGeneratorProps> = ({
           <SchemaGenerator />
         </button>
       </PortalToFollowElemTrigger>
-      <PortalToFollowElemContent className='z-[100]'>
+      <PortalToFollowElemContent className="z-[100]">
         {view === GeneratorView.promptEditor && (
           <PromptEditor
             instruction={instruction}

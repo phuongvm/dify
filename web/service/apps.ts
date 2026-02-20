@@ -1,19 +1,46 @@
-import { del, get, patch, post, put } from './base'
-import type { ApiKeysListResponse, AppDailyConversationsResponse, AppDailyEndUsersResponse, AppDailyMessagesResponse, AppDetailResponse, AppListResponse, AppStatisticsResponse, AppTemplatesResponse, AppTokenCostsResponse, AppVoicesListResponse, CreateApiKeyResponse, DSLImportMode, DSLImportResponse, GenerationIntroductionResponse, TracingConfig, TracingStatus, UpdateAppModelConfigResponse, UpdateAppSiteCodeResponse, UpdateOpenAIKeyResponse, ValidateOpenAIKeyResponse, WebhookTriggerResponse, WorkflowDailyConversationsResponse } from '@/models/app'
+import type { TracingProvider } from '@/app/(commonLayout)/app/(appDetailLayout)/[appId]/overview/tracing/type'
+import type { ApiKeysListResponse, AppDailyConversationsResponse, AppDailyEndUsersResponse, AppDailyMessagesResponse, AppDetailResponse, AppListResponse, AppStatisticsResponse, AppTemplatesResponse, AppTokenCostsResponse, AppVoicesListResponse, CreateApiKeyResponse, DSLImportMode, DSLImportResponse, GenerationIntroductionResponse, TracingConfig, TracingStatus, UpdateAppModelConfigResponse, UpdateAppSiteCodeResponse, UpdateOpenAIKeyResponse, ValidateOpenAIKeyResponse, WebhookTriggerResponse, WorkflowDailyConversationsResponse, WorkflowOnlineUser } from '@/models/app'
 import type { CommonResponse } from '@/models/common'
 import type { AppIconType, AppModeEnum, ModelConfig } from '@/types/app'
-import type { TracingProvider } from '@/app/(commonLayout)/app/(appDetailLayout)/[appId]/overview/tracing/type'
+import { del, get, patch, post, put } from './base'
+import { consoleClient } from './client'
 
-export const fetchAppList = ({ url, params }: { url: string; params?: Record<string, any> }): Promise<AppListResponse> => {
+export const fetchAppList = ({ url, params }: { url: string, params?: Record<string, any> }): Promise<AppListResponse> => {
   return get<AppListResponse>(url, { params })
 }
 
-export const fetchAppDetail = ({ url, id }: { url: string; id: string }): Promise<AppDetailResponse> => {
+export const fetchWorkflowOnlineUsers = async ({ workflowIds }: { workflowIds: string[] }): Promise<Record<string, WorkflowOnlineUser[]>> => {
+  if (!workflowIds.length)
+    return {}
+
+  const params = { workflow_ids: workflowIds.join(',') }
+  const response = await consoleClient.apps.workflowOnlineUsers({
+    query: params,
+  })
+
+  if (!response || !response.data)
+    return {}
+
+  if (Array.isArray(response.data)) {
+    return response.data.reduce<Record<string, WorkflowOnlineUser[]>>((acc, item) => {
+      if (item?.workflow_id)
+        acc[item.workflow_id] = item.users || []
+      return acc
+    }, {})
+  }
+
+  return Object.entries(response.data).reduce<Record<string, WorkflowOnlineUser[]>>((acc, [workflowId, users]) => {
+    if (workflowId)
+      acc[workflowId] = users || []
+    return acc
+  }, {})
+}
+
+export const fetchAppDetail = ({ url, id }: { url: string, id: string }): Promise<AppDetailResponse> => {
   return get<AppDetailResponse>(`${url}/${id}`)
 }
 
-// Direct API call function for non-SWR usage
-export const fetchAppDetailDirect = async ({ url, id }: { url: string; id: string }): Promise<AppDetailResponse> => {
+export const fetchAppDetailDirect = async ({ url, id }: { url: string, id: string }): Promise<AppDetailResponse> => {
   return get<AppDetailResponse>(`${url}/${id}`)
 }
 
@@ -84,7 +111,7 @@ export const copyApp = ({
   return post<AppDetailResponse>(`apps/${appID}/copy`, { body: { name, icon_type, icon, icon_background, mode, description } })
 }
 
-export const exportAppConfig = ({ appID, include = false, workflowID }: { appID: string; include?: boolean; workflowID?: string }): Promise<{ data: string }> => {
+export const exportAppConfig = ({ appID, include = false, workflowID }: { appID: string, include?: boolean, workflowID?: string }): Promise<{ data: string }> => {
   const params = new URLSearchParams({
     include_secret: include.toString(),
   })
@@ -93,7 +120,36 @@ export const exportAppConfig = ({ appID, include = false, workflowID }: { appID:
   return get<{ data: string }>(`apps/${appID}/export?${params.toString()}`)
 }
 
-export const importDSL = ({ mode, yaml_content, yaml_url, app_id, name, description, icon_type, icon, icon_background }: { mode: DSLImportMode; yaml_content?: string; yaml_url?: string; app_id?: string; name?: string; description?: string; icon_type?: AppIconType; icon?: string; icon_background?: string }): Promise<DSLImportResponse> => {
+export const exportAppBundle = async ({ appID, include = false, workflowID }: { appID: string, include?: boolean, workflowID?: string }): Promise<void> => {
+  const { API_PREFIX, CSRF_COOKIE_NAME, CSRF_HEADER_NAME } = await import('@/config')
+  const Cookies = (await import('js-cookie')).default
+  const params = new URLSearchParams({
+    include_secret: include.toString(),
+  })
+  if (workflowID)
+    params.append('workflow_id', workflowID)
+
+  const url = `${API_PREFIX}/apps/${appID}/export-bundle?${params.toString()}`
+  const response = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      [CSRF_HEADER_NAME]: Cookies.get(CSRF_COOKIE_NAME()) || '',
+    },
+  })
+
+  if (!response.ok)
+    throw new Error('Export bundle failed')
+
+  const result: { download_url: string, filename: string } = await response.json()
+
+  const a = document.createElement('a')
+  a.href = result.download_url
+  a.download = result.filename
+  a.click()
+}
+
+export const importDSL = ({ mode, yaml_content, yaml_url, app_id, name, description, icon_type, icon, icon_background }: { mode: DSLImportMode, yaml_content?: string, yaml_url?: string, app_id?: string, name?: string, description?: string, icon_type?: AppIconType, icon?: string, icon_background?: string }): Promise<DSLImportResponse> => {
   return post<DSLImportResponse>('apps/imports', { body: { mode, yaml_content, yaml_url, app_id, name, description, icon, icon_type, icon_background } })
 }
 
@@ -101,7 +157,88 @@ export const importDSLConfirm = ({ import_id }: { import_id: string }): Promise<
   return post<DSLImportResponse>(`apps/imports/${import_id}/confirm`, { body: {} })
 }
 
-export const switchApp = ({ appID, name, icon_type, icon, icon_background }: { appID: string; name: string; icon_type: AppIconType; icon: string; icon_background?: string | null }): Promise<{ new_app_id: string }> => {
+export type PublishToCreatorsPlatformResponse = {
+  redirect_url: string
+}
+
+export const publishToCreatorsPlatform = ({ appID }: { appID: string }): Promise<PublishToCreatorsPlatformResponse> => {
+  return post<PublishToCreatorsPlatformResponse>(`apps/${appID}/publish-to-creators-platform`, { body: {} })
+}
+
+export type ImportBundlePrepareResponse = {
+  import_id: string
+  upload_url: string
+}
+
+export const prepareImportBundle = (): Promise<ImportBundlePrepareResponse> => {
+  return post<ImportBundlePrepareResponse>('apps/imports-bundle/prepare', { body: {} })
+}
+
+export const confirmImportBundle = ({
+  import_id,
+  name,
+  description,
+  icon_type,
+  icon,
+  icon_background,
+}: {
+  import_id: string
+  name?: string
+  description?: string
+  icon_type?: string
+  icon?: string
+  icon_background?: string
+}): Promise<DSLImportResponse> => {
+  return post<DSLImportResponse>(`apps/imports-bundle/${import_id}/confirm`, {
+    body: {
+      name,
+      description,
+      icon_type,
+      icon,
+      icon_background,
+    },
+  })
+}
+
+export const importAppBundle = async ({
+  file,
+  name,
+  description,
+  icon_type,
+  icon,
+  icon_background,
+}: {
+  file: File
+  name?: string
+  description?: string
+  icon_type?: string
+  icon?: string
+  icon_background?: string
+}): Promise<DSLImportResponse> => {
+  // Step 1: Prepare import and get upload URL
+  const { import_id, upload_url } = await prepareImportBundle()
+
+  // Step 2: Upload file to presigned URL
+  const uploadResponse = await fetch(upload_url, {
+    method: 'PUT',
+    body: file,
+  })
+
+  if (!uploadResponse.ok)
+    throw new Error('Failed to upload bundle file')
+
+  // Step 3: Confirm import
+  return confirmImportBundle({
+    import_id,
+    name,
+    description,
+    icon_type,
+    icon,
+    icon_background,
+  })
+}
+
+export const switchApp = ({ appID, name, icon_type, icon, icon_background }: { appID: string, name: string, icon_type: AppIconType, icon: string, icon_background?: string | null }): Promise<{ new_app_id: string }> => {
   return post<{ new_app_id: string }>(`apps/${appID}/convert-to-workflow`, { body: { name, icon_type, icon, icon_background } })
 }
 
@@ -109,16 +246,16 @@ export const deleteApp = (appID: string): Promise<CommonResponse> => {
   return del<CommonResponse>(`apps/${appID}`)
 }
 
-export const updateAppSiteStatus = ({ url, body }: { url: string; body: Record<string, any> }): Promise<AppDetailResponse> => {
+export const updateAppSiteStatus = ({ url, body }: { url: string, body: Record<string, any> }): Promise<AppDetailResponse> => {
   return post<AppDetailResponse>(url, { body })
 }
 
-export const updateAppApiStatus = ({ url, body }: { url: string; body: Record<string, any> }): Promise<AppDetailResponse> => {
+export const updateAppApiStatus = ({ url, body }: { url: string, body: Record<string, any> }): Promise<AppDetailResponse> => {
   return post<AppDetailResponse>(url, { body })
 }
 
 // path: /apps/{appId}/rate-limit
-export const updateAppRateLimit = ({ url, body }: { url: string; body: Record<string, any> }): Promise<AppDetailResponse> => {
+export const updateAppRateLimit = ({ url, body }: { url: string, body: Record<string, any> }): Promise<AppDetailResponse> => {
   return post<AppDetailResponse>(url, { body })
 }
 
@@ -126,68 +263,68 @@ export const updateAppSiteAccessToken = ({ url }: { url: string }): Promise<Upda
   return post<UpdateAppSiteCodeResponse>(url)
 }
 
-export const updateAppSiteConfig = ({ url, body }: { url: string; body: Record<string, any> }): Promise<AppDetailResponse> => {
+export const updateAppSiteConfig = ({ url, body }: { url: string, body: Record<string, any> }): Promise<AppDetailResponse> => {
   return post<AppDetailResponse>(url, { body })
 }
 
-export const getAppDailyMessages = ({ url, params }: { url: string; params: Record<string, any> }): Promise<AppDailyMessagesResponse> => {
+export const getAppDailyMessages = ({ url, params }: { url: string, params: Record<string, any> }): Promise<AppDailyMessagesResponse> => {
   return get<AppDailyMessagesResponse>(url, { params })
 }
 
-export const getAppDailyConversations = ({ url, params }: { url: string; params: Record<string, any> }): Promise<AppDailyConversationsResponse> => {
+export const getAppDailyConversations = ({ url, params }: { url: string, params: Record<string, any> }): Promise<AppDailyConversationsResponse> => {
   return get<AppDailyConversationsResponse>(url, { params })
 }
 
-export const getWorkflowDailyConversations = ({ url, params }: { url: string; params: Record<string, any> }): Promise<WorkflowDailyConversationsResponse> => {
+export const getWorkflowDailyConversations = ({ url, params }: { url: string, params: Record<string, any> }): Promise<WorkflowDailyConversationsResponse> => {
   return get<WorkflowDailyConversationsResponse>(url, { params })
 }
 
-export const getAppStatistics = ({ url, params }: { url: string; params: Record<string, any> }): Promise<AppStatisticsResponse> => {
+export const getAppStatistics = ({ url, params }: { url: string, params: Record<string, any> }): Promise<AppStatisticsResponse> => {
   return get<AppStatisticsResponse>(url, { params })
 }
 
-export const getAppDailyEndUsers = ({ url, params }: { url: string; params: Record<string, any> }): Promise<AppDailyEndUsersResponse> => {
+export const getAppDailyEndUsers = ({ url, params }: { url: string, params: Record<string, any> }): Promise<AppDailyEndUsersResponse> => {
   return get<AppDailyEndUsersResponse>(url, { params })
 }
 
-export const getAppTokenCosts = ({ url, params }: { url: string; params: Record<string, any> }): Promise<AppTokenCostsResponse> => {
+export const getAppTokenCosts = ({ url, params }: { url: string, params: Record<string, any> }): Promise<AppTokenCostsResponse> => {
   return get<AppTokenCostsResponse>(url, { params })
 }
 
-export const updateAppModelConfig = ({ url, body }: { url: string; body: Record<string, any> }): Promise<UpdateAppModelConfigResponse> => {
+export const updateAppModelConfig = ({ url, body }: { url: string, body: Record<string, any> }): Promise<UpdateAppModelConfigResponse> => {
   return post<UpdateAppModelConfigResponse>(url, { body })
 }
 
 // For temp testing
-export const fetchAppListNoMock = ({ url, params }: { url: string; params: Record<string, any> }): Promise<AppListResponse> => {
+export const fetchAppListNoMock = ({ url, params }: { url: string, params: Record<string, any> }): Promise<AppListResponse> => {
   return get<AppListResponse>(url, params)
 }
 
-export const fetchApiKeysList = ({ url, params }: { url: string; params: Record<string, any> }): Promise<ApiKeysListResponse> => {
+export const fetchApiKeysList = ({ url, params }: { url: string, params: Record<string, any> }): Promise<ApiKeysListResponse> => {
   return get<ApiKeysListResponse>(url, params)
 }
 
-export const delApikey = ({ url, params }: { url: string; params: Record<string, any> }): Promise<CommonResponse> => {
+export const delApikey = ({ url, params }: { url: string, params: Record<string, any> }): Promise<CommonResponse> => {
   return del<CommonResponse>(url, params)
 }
 
-export const createApikey = ({ url, body }: { url: string; body: Record<string, any> }): Promise<CreateApiKeyResponse> => {
+export const createApikey = ({ url, body }: { url: string, body: Record<string, any> }): Promise<CreateApiKeyResponse> => {
   return post<CreateApiKeyResponse>(url, body)
 }
 
-export const validateOpenAIKey = ({ url, body }: { url: string; body: { token: string } }): Promise<ValidateOpenAIKeyResponse> => {
+export const validateOpenAIKey = ({ url, body }: { url: string, body: { token: string } }): Promise<ValidateOpenAIKeyResponse> => {
   return post<ValidateOpenAIKeyResponse>(url, { body })
 }
 
-export const updateOpenAIKey = ({ url, body }: { url: string; body: { token: string } }): Promise<UpdateOpenAIKeyResponse> => {
+export const updateOpenAIKey = ({ url, body }: { url: string, body: { token: string } }): Promise<UpdateOpenAIKeyResponse> => {
   return post<UpdateOpenAIKeyResponse>(url, { body })
 }
 
-export const generationIntroduction = ({ url, body }: { url: string; body: { prompt_template: string } }): Promise<GenerationIntroductionResponse> => {
+export const generationIntroduction = ({ url, body }: { url: string, body: { prompt_template: string } }): Promise<GenerationIntroductionResponse> => {
   return post<GenerationIntroductionResponse>(url, { body })
 }
 
-export const fetchAppVoices = ({ appId, language }: { appId: string; language?: string }): Promise<AppVoicesListResponse> => {
+export const fetchAppVoices = ({ appId, language }: { appId: string, language?: string }): Promise<AppVoicesListResponse> => {
   language = language || 'en-US'
   return get<AppVoicesListResponse>(`apps/${appId}/text-to-audio/voices?language=${language}`)
 }
@@ -197,12 +334,12 @@ export const fetchTracingStatus = ({ appId }: { appId: string }): Promise<Tracin
   return get<TracingStatus>(`/apps/${appId}/trace`)
 }
 
-export const updateTracingStatus = ({ appId, body }: { appId: string; body: Record<string, any> }): Promise<CommonResponse> => {
+export const updateTracingStatus = ({ appId, body }: { appId: string, body: Record<string, any> }): Promise<CommonResponse> => {
   return post<CommonResponse>(`/apps/${appId}/trace`, { body })
 }
 
 // Webhook Trigger
-export const fetchWebhookUrl = ({ appId, nodeId }: { appId: string; nodeId: string }): Promise<WebhookTriggerResponse> => {
+export const fetchWebhookUrl = ({ appId, nodeId }: { appId: string, nodeId: string }): Promise<WebhookTriggerResponse> => {
   return get<WebhookTriggerResponse>(
     `apps/${appId}/workflows/triggers/webhook`,
     { params: { node_id: nodeId } },
@@ -210,7 +347,7 @@ export const fetchWebhookUrl = ({ appId, nodeId }: { appId: string; nodeId: stri
   )
 }
 
-export const fetchTracingConfig = ({ appId, provider }: { appId: string; provider: TracingProvider }): Promise<TracingConfig & { has_not_configured: true }> => {
+export const fetchTracingConfig = ({ appId, provider }: { appId: string, provider: TracingProvider }): Promise<TracingConfig & { has_not_configured: true }> => {
   return get<TracingConfig & { has_not_configured: true }>(`/apps/${appId}/trace-config`, {
     params: {
       tracing_provider: provider,
@@ -218,14 +355,14 @@ export const fetchTracingConfig = ({ appId, provider }: { appId: string; provide
   })
 }
 
-export const addTracingConfig = ({ appId, body }: { appId: string; body: TracingConfig }): Promise<CommonResponse> => {
+export const addTracingConfig = ({ appId, body }: { appId: string, body: TracingConfig }): Promise<CommonResponse> => {
   return post<CommonResponse>(`/apps/${appId}/trace-config`, { body })
 }
 
-export const updateTracingConfig = ({ appId, body }: { appId: string; body: TracingConfig }): Promise<CommonResponse> => {
+export const updateTracingConfig = ({ appId, body }: { appId: string, body: TracingConfig }): Promise<CommonResponse> => {
   return patch<CommonResponse>(`/apps/${appId}/trace-config`, { body })
 }
 
-export const removeTracingConfig = ({ appId, provider }: { appId: string; provider: TracingProvider }): Promise<CommonResponse> => {
+export const removeTracingConfig = ({ appId, provider }: { appId: string, provider: TracingProvider }): Promise<CommonResponse> => {
   return del<CommonResponse>(`/apps/${appId}/trace-config?tracing_provider=${provider}`)
 }

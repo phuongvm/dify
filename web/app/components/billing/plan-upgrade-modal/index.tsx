@@ -1,13 +1,13 @@
 'use client'
 import type { FC } from 'react'
-import React, { useCallback } from 'react'
+import * as React from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import Modal from '@/app/components/base/modal'
 import Button from '@/app/components/base/button'
+import UpgradeModalBase from '@/app/components/base/upgrade-modal'
 import UpgradeBtn from '@/app/components/billing/upgrade-btn'
-import styles from './style.module.css'
-import { SquareChecklist } from '../../base/icons/src/vender/other'
 import { useModalContext } from '@/context/modal-context'
+import { SquareChecklist } from '../../base/icons/src/vender/other'
 
 type Props = {
   Icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>
@@ -33,54 +33,37 @@ const PlanUpgradeModal: FC<Props> = ({
 
   const handleUpgrade = useCallback(() => {
     onClose()
-    onUpgrade ? onUpgrade() : setShowPricingModal()
+    if (onUpgrade)
+      onUpgrade()
+    else
+      setShowPricingModal()
   }, [onClose, onUpgrade, setShowPricingModal])
 
   return (
-    <Modal
-      isShow={show}
+    <UpgradeModalBase
+      show={show}
       onClose={onClose}
-      closable={false}
-      clickOutsideNotClose
-      className={`${styles.surface} w-[580px] rounded-2xl !p-0`}
-    >
-      <div className='relative'>
-        <div
-          aria-hidden
-          className={`${styles.heroOverlay} pointer-events-none absolute inset-0`}
-        />
-        <div className='px-8 pt-8'>
-          <div className={`${styles.icon} flex size-12 items-center justify-center rounded-xl shadow-lg backdrop-blur-[5px]`}>
-            <Icon className='size-6 text-text-primary-on-surface' />
-          </div>
-          <div className='mt-6 space-y-2'>
-            <div className={`${styles.highlight} title-3xl-semi-bold`}>
-              {title}
-            </div>
-            <div className='system-md-regular text-text-tertiary'>
-              {description}
-            </div>
-          </div>
-          {extraInfo}
-        </div>
-      </div>
-
-      <div className='mb-8 mt-10 flex justify-end space-x-2 px-8'>
-        <Button
-          onClick={onClose}
-        >
-          {t('billing.triggerLimitModal.dismiss')}
-        </Button>
-        <UpgradeBtn
-          size='custom'
-          isShort
-          onClick={handleUpgrade}
-          className='!h-8 !rounded-lg px-2'
-          labelKey='billing.triggerLimitModal.upgrade'
-          loc='trigger-events-limit-modal'
-        />
-      </div>
-    </Modal>
+      // eslint-disable-next-line ts/no-explicit-any
+      Icon={Icon as any}
+      title={title}
+      description={description}
+      extraInfo={extraInfo}
+      footer={(
+        <>
+          <Button onClick={onClose}>
+            {t('triggerLimitModal.dismiss', { ns: 'billing' })}
+          </Button>
+          <UpgradeBtn
+            size="custom"
+            isShort
+            onClick={handleUpgrade}
+            className="!h-8 !rounded-lg px-2"
+            labelKey="triggerLimitModal.upgrade"
+            loc="trigger-events-limit-modal"
+          />
+        </>
+      )}
+    />
   )
 }
 

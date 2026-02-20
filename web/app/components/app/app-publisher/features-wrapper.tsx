@@ -1,18 +1,20 @@
-import React, { useCallback, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { produce } from 'immer'
 import type { AppPublisherProps } from '@/app/components/app/app-publisher'
-import Confirm from '@/app/components/base/confirm'
-import AppPublisher from '@/app/components/app/app-publisher'
-import { useFeatures, useFeaturesStore } from '@/app/components/base/features/hooks'
 import type { ModelAndParameter } from '@/app/components/app/configuration/debug/types'
 import type { FileUpload } from '@/app/components/base/features/types'
-import { Resolution } from '@/types/app'
+import type { PublishWorkflowParams } from '@/types/workflow'
+import { produce } from 'immer'
+import * as React from 'react'
+import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import AppPublisher from '@/app/components/app/app-publisher'
+import Confirm from '@/app/components/base/confirm'
+import { useFeatures, useFeaturesStore } from '@/app/components/base/features/hooks'
 import { FILE_EXTS } from '@/app/components/base/prompt-editor/constants'
 import { SupportUploadFileTypes } from '@/app/components/workflow/types'
+import { Resolution } from '@/types/app'
 
 type Props = Omit<AppPublisherProps, 'onPublish'> & {
-  onPublish?: (modelAndParameter?: ModelAndParameter, features?: any) => Promise<any> | any
+  onPublish?: (params?: ModelAndParameter | PublishWorkflowParams, features?: any) => Promise<any> | any
   publishedConfig?: any
   resetAppConfig?: () => void
 }
@@ -61,8 +63,8 @@ const FeaturesWrappedAppPublisher = (props: Props) => {
     setRestoreConfirmOpen(false)
   }, [featuresStore, props])
 
-  const handlePublish = useCallback((modelAndParameter?: ModelAndParameter) => {
-    return props.onPublish?.(modelAndParameter, features)
+  const handlePublish = useCallback((params?: ModelAndParameter | PublishWorkflowParams) => {
+    return props.onPublish?.(params, features)
   }, [features, props])
 
   return (
@@ -71,11 +73,12 @@ const FeaturesWrappedAppPublisher = (props: Props) => {
         ...props,
         onPublish: handlePublish,
         onRestore: () => setRestoreConfirmOpen(true),
-      }} />
+      }}
+      />
       {restoreConfirmOpen && (
         <Confirm
-          title={t('appDebug.resetConfig.title')}
-          content={t('appDebug.resetConfig.message')}
+          title={t('resetConfig.title', { ns: 'appDebug' })}
+          content={t('resetConfig.message', { ns: 'appDebug' })}
           isShow={restoreConfirmOpen}
           onConfirm={handleConfirm}
           onCancel={() => setRestoreConfirmOpen(false)}

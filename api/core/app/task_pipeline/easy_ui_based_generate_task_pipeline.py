@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from collections.abc import Generator
 from threading import Thread
@@ -39,11 +40,14 @@ from core.app.entities.task_entities import (
     MessageAudioEndStreamResponse,
     MessageAudioStreamResponse,
     MessageEndStreamResponse,
+    StreamEvent,
     StreamResponse,
 )
 from core.app.task_pipeline.based_generate_task_pipeline import BasedGenerateTaskPipeline
 from core.app.task_pipeline.message_cycle_manager import MessageCycleManager
 from core.base.tts import AppGeneratorTTSPublisher, AudioTrunk
+from core.file import helpers as file_helpers
+from core.file.enums import FileTransferMethod
 from core.model_manager import ModelInstance
 from core.model_runtime.entities.llm_entities import LLMResult, LLMResultChunk, LLMResultChunkDelta, LLMUsage
 from core.model_runtime.entities.message_entities import (
@@ -55,10 +59,19 @@ from core.ops.entities.trace_entity import TraceTaskName
 from core.ops.ops_trace_manager import TraceQueueManager, TraceTask
 from core.prompt.utils.prompt_message_util import PromptMessageUtil
 from core.prompt.utils.prompt_template_parser import PromptTemplateParser
+from core.tools.signature import sign_tool_file
 from events.message_event import message_was_created
 from extensions.ext_database import db
 from libs.datetime_utils import naive_utc_now
-from models.model import AppMode, Conversation, Message, MessageAgentThought
+from models.model import (
+    AppMode,
+    Conversation,
+    LLMGenerationDetail,
+    Message,
+    MessageAgentThought,
+    MessageFile,
+    UploadFile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +81,11 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
     EasyUIBasedGenerateTaskPipeline is a class that generate stream output and state management for Application.
     """
 
+    _THINK_PATTERN = re.compile(r"<think[^>]*>(.*?)</think>", re.IGNORECASE | re.DOTALL)
+
     _task_state: EasyUITaskState
     _application_generate_entity: Union[ChatAppGenerateEntity, CompletionAppGenerateEntity, AgentChatAppGenerateEntity]
+    _precomputed_event_type: StreamEvent | None = None
 
     def __init__(
         self,
@@ -342,9 +358,15 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
                 self._task_state.llm_result.message.content = current_content
 
                 if isinstance(event, QueueLLMChunkEvent):
+                    # Determine the event type once, on first LLM chunk, and reuse for subsequent chunks
+                    if not hasattr(self, "_precomputed_event_type") or self._precomputed_event_type is None:
+                        self._precomputed_event_type = self._message_cycle_manager.get_message_event_type(
+                            message_id=self._message_id
+                        )
                     yield self._message_cycle_manager.message_to_stream_response(
                         answer=cast(str, delta_text),
                         message_id=self._message_id,
+                        event_type=self._precomputed_event_type,
                     )
                 else:
                     yield self._agent_message_to_stream_response(
@@ -407,10 +429,135 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
                 )
             )
 
+        # Save LLM generation detail if there's reasoning_content
+        self._save_generation_detail(session=session, message=message, llm_result=llm_result)
+
         message_was_created.send(
             message,
             application_generate_entity=self._application_generate_entity,
         )
+
+    def _save_generation_detail(self, *, session: Session, message: Message, llm_result: LLMResult) -> None:
+        """
+        Save LLM generation detail for Completion/Chat/Agent-Chat applications.
+        For Agent-Chat, also merges MessageAgentThought records.
+        """
+        import json
+
+        reasoning_list: list[str] = []
+        tool_calls_list: list[dict] = []
+        sequence: list[dict] = []
+        answer = message.answer or ""
+
+        # Check if this is Agent-Chat mode by looking for agent thoughts
+        agent_thoughts = (
+            session.query(MessageAgentThought)
+            .filter_by(message_id=message.id)
+            .order_by(MessageAgentThought.position.asc())
+            .all()
+        )
+
+        if agent_thoughts:
+            # Agent-Chat mode: merge MessageAgentThought records
+            content_pos = 0
+            cleaned_answer_parts: list[str] = []
+            for thought in agent_thoughts:
+                # Add thought/reasoning
+                if thought.thought:
+                    reasoning_text = thought.thought
+                    if "<think" in reasoning_text.lower():
+                        clean_text, extracted_reasoning = self._split_reasoning_from_answer(reasoning_text)
+                        if extracted_reasoning:
+                            reasoning_text = extracted_reasoning
+                            thought.thought = clean_text or extracted_reasoning
+                    reasoning_list.append(reasoning_text)
+                    sequence.append({"type": "reasoning", "index": len(reasoning_list) - 1})
+
+                # Add tool calls
+                if thought.tool:
+                    tool_calls_list.append(
+                        {
+                            "name": thought.tool,
+                            "arguments": thought.tool_input or "",
+                            "result": thought.observation or "",
+                        }
+                    )
+                    sequence.append({"type": "tool_call", "index": len(tool_calls_list) - 1})
+
+                # Add answer content if present
+                if thought.answer:
+                    content_text = thought.answer
+                    if "<think" in content_text.lower():
+                        clean_answer, extracted_reasoning = self._split_reasoning_from_answer(content_text)
+                        if extracted_reasoning:
+                            reasoning_list.append(extracted_reasoning)
+                            sequence.append({"type": "reasoning", "index": len(reasoning_list) - 1})
+                        content_text = clean_answer
+                        thought.answer = clean_answer or content_text
+
+                    if content_text:
+                        start = content_pos
+                        end = content_pos + len(content_text)
+                        sequence.append({"type": "content", "start": start, "end": end})
+                        content_pos = end
+                        cleaned_answer_parts.append(content_text)
+
+            if cleaned_answer_parts:
+                merged_answer = "".join(cleaned_answer_parts)
+                message.answer = merged_answer
+                llm_result.message.content = merged_answer
+        else:
+            # Completion/Chat mode: use reasoning_content from llm_result
+            reasoning_content = llm_result.reasoning_content
+            if not reasoning_content and answer:
+                # Extract reasoning from <think> blocks and clean the final answer
+                clean_answer, reasoning_content = self._split_reasoning_from_answer(answer)
+                if reasoning_content:
+                    answer = clean_answer
+                    llm_result.message.content = clean_answer
+                    llm_result.reasoning_content = reasoning_content
+                    message.answer = clean_answer
+            if reasoning_content:
+                reasoning_list = [reasoning_content]
+                # Content comes first, then reasoning
+                if answer:
+                    sequence.append({"type": "content", "start": 0, "end": len(answer)})
+                sequence.append({"type": "reasoning", "index": 0})
+
+        # Only save if there's meaningful generation detail
+        if not reasoning_list and not tool_calls_list:
+            return
+
+        # Check if generation detail already exists
+        existing = session.query(LLMGenerationDetail).filter_by(message_id=message.id).first()
+
+        if existing:
+            existing.reasoning_content = json.dumps(reasoning_list) if reasoning_list else None
+            existing.tool_calls = json.dumps(tool_calls_list) if tool_calls_list else None
+            existing.sequence = json.dumps(sequence) if sequence else None
+        else:
+            generation_detail = LLMGenerationDetail(
+                tenant_id=self._application_generate_entity.app_config.tenant_id,
+                app_id=self._application_generate_entity.app_config.app_id,
+                message_id=message.id,
+                reasoning_content=json.dumps(reasoning_list) if reasoning_list else None,
+                tool_calls=json.dumps(tool_calls_list) if tool_calls_list else None,
+                sequence=json.dumps(sequence) if sequence else None,
+            )
+            session.add(generation_detail)
+
+    @classmethod
+    def _split_reasoning_from_answer(cls, text: str) -> tuple[str, str]:
+        """
+        Extract reasoning segments from <think> blocks and return (clean_text, reasoning).
+        """
+        matches = cls._THINK_PATTERN.findall(text)
+        reasoning_content = "\n".join(match.strip() for match in matches) if matches else ""
+
+        clean_text = cls._THINK_PATTERN.sub("", text)
+        clean_text = re.sub(r"\n\s*\n", "\n\n", clean_text).strip()
+
+        return clean_text, reasoning_content or ""
 
     def _handle_stop(self, event: QueueStopEvent):
         """
@@ -454,6 +601,85 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
             id=self._message_id,
             metadata=metadata_dict,
         )
+
+    def _record_files(self):
+        with Session(db.engine, expire_on_commit=False) as session:
+            message_files = session.scalars(select(MessageFile).where(MessageFile.message_id == self._message_id)).all()
+            if not message_files:
+                return None
+
+            files_list = []
+            upload_file_ids = [
+                mf.upload_file_id
+                for mf in message_files
+                if mf.transfer_method == FileTransferMethod.LOCAL_FILE and mf.upload_file_id
+            ]
+            upload_files_map = {}
+            if upload_file_ids:
+                upload_files = session.scalars(select(UploadFile).where(UploadFile.id.in_(upload_file_ids))).all()
+                upload_files_map = {uf.id: uf for uf in upload_files}
+
+            for message_file in message_files:
+                upload_file = None
+                if message_file.transfer_method == FileTransferMethod.LOCAL_FILE and message_file.upload_file_id:
+                    upload_file = upload_files_map.get(message_file.upload_file_id)
+
+                url = None
+                filename = "file"
+                mime_type = "application/octet-stream"
+                size = 0
+                extension = ""
+
+                if message_file.transfer_method == FileTransferMethod.REMOTE_URL:
+                    url = message_file.url
+                    if message_file.url:
+                        filename = message_file.url.split("/")[-1].split("?")[0]  # Remove query params
+                elif message_file.transfer_method == FileTransferMethod.LOCAL_FILE:
+                    if upload_file:
+                        url = file_helpers.get_signed_file_url(upload_file_id=str(upload_file.id))
+                        filename = upload_file.name
+                        mime_type = upload_file.mime_type or "application/octet-stream"
+                        size = upload_file.size or 0
+                        extension = f".{upload_file.extension}" if upload_file.extension else ""
+                    elif message_file.upload_file_id:
+                        # Fallback: generate URL even if upload_file not found
+                        url = file_helpers.get_signed_file_url(upload_file_id=str(message_file.upload_file_id))
+                elif message_file.transfer_method == FileTransferMethod.TOOL_FILE and message_file.url:
+                    # For tool files, use URL directly if it's HTTP, otherwise sign it
+                    if message_file.url.startswith("http"):
+                        url = message_file.url
+                        filename = message_file.url.split("/")[-1].split("?")[0]
+                    else:
+                        # Extract tool file id and extension from URL
+                        url_parts = message_file.url.split("/")
+                        if url_parts:
+                            file_part = url_parts[-1].split("?")[0]  # Remove query params first
+                            # Use rsplit to correctly handle filenames with multiple dots
+                            if "." in file_part:
+                                tool_file_id, ext = file_part.rsplit(".", 1)
+                                extension = f".{ext}"
+                            else:
+                                tool_file_id = file_part
+                                extension = ".bin"
+                            url = sign_tool_file(tool_file_id=tool_file_id, extension=extension)
+                            filename = file_part
+
+                transfer_method_value = message_file.transfer_method
+                remote_url = message_file.url if message_file.transfer_method == FileTransferMethod.REMOTE_URL else ""
+                file_dict = {
+                    "related_id": message_file.id,
+                    "extension": extension,
+                    "filename": filename,
+                    "size": size,
+                    "mime_type": mime_type,
+                    "transfer_method": transfer_method_value,
+                    "type": message_file.type,
+                    "url": url or "",
+                    "upload_file_id": message_file.upload_file_id or message_file.id,
+                    "remote_url": remote_url,
+                }
+                files_list.append(file_dict)
+            return files_list or None
 
     def _agent_message_to_stream_response(self, answer: str, message_id: str) -> AgentMessageStreamResponse:
         """

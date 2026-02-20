@@ -1,6 +1,8 @@
-import { UUID_NIL } from './constants'
-import type { IChatItem } from './chat/type'
+import type { ChatMessageRes, IChatItem } from './chat/type'
 import type { ChatItem, ChatItemInTree } from './types'
+import type { LLMGenerationItem } from '@/types/workflow'
+import { v4 as uuidV4 } from 'uuid'
+import { UUID_NIL } from './constants'
 
 async function decodeBase64AndDecompress(base64String: string) {
   try {
@@ -154,10 +156,12 @@ function buildChatItemTree(allMessages: IChatItem[]): ChatItemInTree[] {
       if (
         !parentMessageId
         || !allMessages.some(item => item.id === parentMessageId) // parent message might not be fetched yet, in this case we will append the question to the root nodes
-      )
+      ) {
         rootNodes.push(questionNode)
-      else
+      }
+      else {
         map[parentMessageId]?.children!.push(questionNode)
+      }
     }
   }
 
@@ -230,14 +234,79 @@ function getThreadMessages(tree: ChatItemInTree[], targetMessageId?: string): Ch
   return ret
 }
 
+const buildLLMGenerationItemsFromHistorySequence = (message: ChatMessageRes): {
+  llmGenerationItems: LLMGenerationItem[]
+  message: string
+} => {
+  const { answer, generation_detail } = message
+  let result = ''
+
+  if (!generation_detail) {
+    result = answer || ''
+    return { llmGenerationItems: [], message: result }
+  }
+
+  const { reasoning_content = [], tool_calls = [], sequence = [] } = generation_detail
+  const llmGenerationItems: LLMGenerationItem[] = []
+
+  sequence.forEach((segment) => {
+    switch (segment.type) {
+      case 'content': {
+        const text = answer?.substring(segment.start, segment.end)
+        if (text?.trim()) {
+          result += text
+          llmGenerationItems.push({
+            id: uuidV4(),
+            type: 'text',
+            text,
+            textCompleted: true,
+          })
+        }
+        break
+      }
+      case 'reasoning': {
+        const reasoning = reasoning_content[segment.index]
+        if (reasoning) {
+          llmGenerationItems.push({
+            id: uuidV4(),
+            type: 'thought',
+            thoughtOutput: reasoning,
+            thoughtCompleted: true,
+          })
+        }
+        break
+      }
+      case 'tool_call': {
+        const toolCall = tool_calls[segment.index]
+        if (toolCall) {
+          llmGenerationItems.push({
+            id: uuidV4(),
+            type: 'tool',
+            toolName: toolCall.name,
+            toolArguments: toolCall.arguments,
+            toolOutput: toolCall.result,
+            toolDuration: toolCall.elapsed_time,
+            toolIcon: toolCall.icon,
+            toolIconDark: toolCall.icon_dark,
+          })
+        }
+        break
+      }
+    }
+  })
+
+  return { llmGenerationItems, message: result }
+}
+
 export {
-  getRawInputsFromUrlParams,
+  buildChatItemTree,
+  buildLLMGenerationItemsFromHistorySequence,
+  getLastAnswer,
   getProcessedInputsFromUrlParams,
   getProcessedSystemVariablesFromUrlParams,
   getProcessedUserVariablesFromUrlParams,
+  getRawInputsFromUrlParams,
   getRawUserVariablesFromUrlParams,
-  isValidGeneratedAnswer,
-  getLastAnswer,
-  buildChatItemTree,
   getThreadMessages,
+  isValidGeneratedAnswer,
 }

@@ -1,36 +1,34 @@
-import { useCallback } from 'react'
-import { produce } from 'immer'
-import { useTranslation } from 'react-i18next'
-import { useStoreApi } from 'reactflow'
 import type {
   BlockEnum,
   ChildNodeTypeCount,
   Node,
 } from '../../types'
+import { produce } from 'immer'
+import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useNodesMetaData } from '@/app/components/workflow/hooks'
+import { useCollaborativeWorkflow } from '@/app/components/workflow/hooks/use-collaborative-workflow'
+import {
+  ITERATION_PADDING,
+} from '../../constants'
 import {
   generateNewNode,
   getNodeCustomTypeByNodeDataType,
 } from '../../utils'
-import {
-  ITERATION_PADDING,
-} from '../../constants'
 import { CUSTOM_ITERATION_START_NODE } from '../iteration-start/constants'
-import { useNodesMetaData } from '@/app/components/workflow/hooks'
 
 export const useNodeIterationInteractions = () => {
   const { t } = useTranslation()
-  const store = useStoreApi()
   const { nodesMap: nodesMetaDataMap } = useNodesMetaData()
+  const collaborativeWorkflow = useCollaborativeWorkflow()
 
   const handleNodeIterationRerender = useCallback((nodeId: string) => {
-    const {
-      getNodes,
-      setNodes,
-    } = store.getState()
+    const { nodes, setNodes } = collaborativeWorkflow.getState()
 
-    const nodes = getNodes()
     const currentNode = nodes.find(n => n.id === nodeId)!
-    const childrenNodes = nodes.filter(n => n.parentId === nodeId)
+    const childrenNodes = nodes.filter(n => n.parentId === nodeId && n.type !== CUSTOM_ITERATION_START_NODE)
+    if (!childrenNodes.length)
+      return
     let rightNode: Node
     let bottomNode: Node
 
@@ -72,13 +70,12 @@ export const useNodeIterationInteractions = () => {
 
       setNodes(newNodes)
     }
-  }, [store])
+  }, [collaborativeWorkflow])
 
   const handleNodeIterationChildDrag = useCallback((node: Node) => {
-    const { getNodes } = store.getState()
-    const nodes = getNodes()
+    const { nodes } = collaborativeWorkflow.getState()
 
-    const restrictPosition: { x?: number; y?: number } = { x: undefined, y: undefined }
+    const restrictPosition: { x?: number, y?: number } = { x: undefined, y: undefined }
 
     if (node.data.isInIteration) {
       const parentNode = nodes.find(n => n.id === node.parentId)
@@ -98,21 +95,19 @@ export const useNodeIterationInteractions = () => {
     return {
       restrictPosition,
     }
-  }, [store])
+  }, [collaborativeWorkflow])
 
   const handleNodeIterationChildSizeChange = useCallback((nodeId: string) => {
-    const { getNodes } = store.getState()
-    const nodes = getNodes()
+    const { nodes } = collaborativeWorkflow.getState()
     const currentNode = nodes.find(n => n.id === nodeId)!
     const parentId = currentNode.parentId
 
     if (parentId)
       handleNodeIterationRerender(parentId)
-  }, [store, handleNodeIterationRerender])
+  }, [collaborativeWorkflow, handleNodeIterationRerender])
 
   const handleNodeIterationChildrenCopy = useCallback((nodeId: string, newNodeId: string, idMapping: Record<string, string>) => {
-    const { getNodes } = store.getState()
-    const nodes = getNodes()
+    const { nodes } = collaborativeWorkflow.getState()
     const childrenNodes = nodes.filter(n => n.parentId === nodeId && n.type !== CUSTOM_ITERATION_START_NODE)
     const newIdMapping = { ...idMapping }
     const childNodeTypeCount: ChildNodeTypeCount = {}
@@ -120,8 +115,9 @@ export const useNodeIterationInteractions = () => {
     const copyChildren = childrenNodes.map((child, index) => {
       const childNodeType = child.data.type as BlockEnum
       const nodesWithSameType = nodes.filter(node => node.data.type === childNodeType)
+      const defaultValue = nodesMetaDataMap?.[childNodeType]?.defaultValue ?? {}
 
-      if(!childNodeTypeCount[childNodeType])
+      if (!childNodeTypeCount[childNodeType])
         childNodeTypeCount[childNodeType] = nodesWithSameType.length + 1
       else
         childNodeTypeCount[childNodeType] = childNodeTypeCount[childNodeType] + 1
@@ -129,13 +125,13 @@ export const useNodeIterationInteractions = () => {
       const { newNode } = generateNewNode({
         type: getNodeCustomTypeByNodeDataType(childNodeType),
         data: {
-          ...nodesMetaDataMap![childNodeType].defaultValue,
+          ...defaultValue,
           ...child.data,
           selected: false,
           _isBundled: false,
           _connectedSourceHandleIds: [],
           _connectedTargetHandleIds: [],
-          title: nodesWithSameType.length > 0 ? `${t(`workflow.blocks.${childNodeType}`)} ${childNodeTypeCount[childNodeType]}` : t(`workflow.blocks.${childNodeType}`),
+          title: nodesWithSameType.length > 0 ? `${t(`blocks.${childNodeType}`, { ns: 'workflow' })} ${childNodeTypeCount[childNodeType]}` : t(`blocks.${childNodeType}`, { ns: 'workflow' }),
           iteration_id: newNodeId,
           type: childNodeType,
         },
@@ -154,7 +150,7 @@ export const useNodeIterationInteractions = () => {
       copyChildren,
       newIdMapping,
     }
-  }, [store, t])
+  }, [collaborativeWorkflow, t])
 
   return {
     handleNodeIterationRerender,

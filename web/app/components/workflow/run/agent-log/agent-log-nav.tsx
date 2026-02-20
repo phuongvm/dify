@@ -1,8 +1,8 @@
+import type { AgentLogItemWithChildren } from '@/types/workflow'
 import { RiArrowLeftLine } from '@remixicon/react'
 import { useTranslation } from 'react-i18next'
-import AgentLogNavMore from './agent-log-nav-more'
 import Button from '@/app/components/base/button'
-import type { AgentLogItemWithChildren } from '@/types/workflow'
+import AgentLogNavMore from './agent-log-nav-more'
 
 type AgentLogNavProps = {
   agentOrToolLogItemStack: AgentLogItemWithChildren[]
@@ -19,41 +19,41 @@ const AgentLogNav = ({
   const end = agentOrToolLogItemStack.at(-1)
 
   return (
-    <div className='flex h-8 items-center bg-components-panel-bg p-1 pr-3'>
+    <div className="flex h-8 items-center bg-components-panel-bg p-1 pr-3">
       <Button
-        className='shrink-0 px-[5px]'
-        size='small'
-        variant='ghost-accent'
+        className="shrink-0 px-[5px]"
+        size="small"
+        variant="ghost-accent"
         onClick={() => {
           onShowAgentOrToolLog()
         }}
       >
-        <RiArrowLeftLine className='mr-1 h-3.5 w-3.5' />
+        <RiArrowLeftLine className="mr-1 h-3.5 w-3.5" />
         AGENT
       </Button>
-      <div className='system-xs-regular mx-0.5 shrink-0 text-divider-deep'>/</div>
+      <div className="mx-0.5 shrink-0 text-divider-deep system-xs-regular">/</div>
       {
         agentOrToolLogItemStackLength > 1
           ? (
-            <Button
-              className='shrink-0 px-[5px]'
-              size='small'
-              variant='ghost-accent'
-              onClick={() => onShowAgentOrToolLog(first)}
-            >
-              {t('workflow.nodes.agent.strategy.label')}
-            </Button>
-          )
+              <Button
+                className="shrink-0 px-[5px]"
+                size="small"
+                variant="ghost-accent"
+                onClick={() => onShowAgentOrToolLog(first)}
+              >
+                {t('nodes.agent.strategy.label', { ns: 'workflow' })}
+              </Button>
+            )
           : (
-            <div className='system-xs-medium-uppercase flex items-center px-[5px] text-text-tertiary'>
-              {t('workflow.nodes.agent.strategy.label')}
-            </div>
-          )
+              <div className="flex items-center px-[5px] text-text-tertiary system-xs-medium-uppercase">
+                {t('nodes.agent.strategy.label', { ns: 'workflow' })}
+              </div>
+            )
       }
       {
         !!mid.length && (
           <>
-            <div className='system-xs-regular mx-0.5 shrink-0 text-divider-deep'>/</div>
+            <div className="mx-0.5 shrink-0 text-divider-deep system-xs-regular">/</div>
             <AgentLogNavMore
               options={mid}
               onShowAgentOrToolLog={onShowAgentOrToolLog}
@@ -64,8 +64,8 @@ const AgentLogNav = ({
       {
         !!end && agentOrToolLogItemStackLength > 1 && (
           <>
-            <div className='system-xs-regular mx-0.5 shrink-0 text-divider-deep'>/</div>
-            <div className='system-xs-medium-uppercase flex items-center px-[5px] text-text-tertiary'>
+            <div className="mx-0.5 shrink-0 text-divider-deep system-xs-regular">/</div>
+            <div className="flex items-center px-[5px] text-text-tertiary system-xs-medium-uppercase">
               {end.label}
             </div>
           </>

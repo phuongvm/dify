@@ -1,6 +1,6 @@
 'use client'
 import type { FC, ReactNode } from 'react'
-import cn from '@/utils/classnames'
+import { cn } from '@/utils/classnames'
 
 type StartNodeOptionProps = {
   icon: ReactNode
@@ -35,13 +35,16 @@ const StartNodeOption: FC<StartNodeOptionProps> = ({
           <h3 className="system-md-semi-bold text-text-primary">
             {title}
             {subtitle && (
-              <span className="system-md-regular text-text-quaternary"> {subtitle}</span>
+              <span className="text-text-quaternary system-md-regular">
+                {' '}
+                {subtitle}
+              </span>
             )}
           </h3>
         </div>
 
         <div className="h-12 leading-4">
-          <p className="system-xs-regular text-text-tertiary">
+          <p className="text-text-tertiary system-xs-regular">
             {description}
           </p>
         </div>

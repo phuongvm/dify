@@ -1,7 +1,10 @@
+import logging
 from collections.abc import Generator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 
 from core.callback_handler.workflow_tool_callback_handler import DifyWorkflowCallbackHandler
@@ -28,7 +31,7 @@ from factories import file_factory
 from models import ToolFile
 from services.tools.builtin_tools_manage_service import BuiltinToolManageService
 
-from .entities import ToolNodeData
+from .entities import ToolNodeData, is_variable_format
 from .exc import (
     ToolFileError,
     ToolNodeError,
@@ -184,6 +187,7 @@ class ToolNode(Node[ToolNodeData]):
             tool_parameters (Sequence[ToolParameter]): The list of tool parameters.
             variable_pool (VariablePool): The variable pool containing the variables.
             node_data (ToolNodeData): The data associated with the tool node.
+            for_log (bool): Whether to generate parameters for logging.
 
         Returns:
             Mapping[str, Any]: A dictionary containing the generated parameters.
@@ -199,14 +203,35 @@ class ToolNode(Node[ToolNodeData]):
                 continue
             tool_input = node_data.tool_parameters[parameter_name]
             if tool_input.type == "variable":
-                variable = variable_pool.get(tool_input.value)
+                if not isinstance(tool_input.value, list):
+                    raise ToolParameterError(f"Invalid variable selector for parameter '{parameter_name}'")
+                selector = tool_input.value
+                variable = variable_pool.get(selector)
                 if variable is None:
                     if parameter.required:
-                        raise ToolParameterError(f"Variable {tool_input.value} does not exist")
+                        raise ToolParameterError(f"Variable {selector} does not exist")
                     continue
                 parameter_value = variable.value
+            elif tool_input.type == "nested_node":
+                if not isinstance(tool_input.value, str) or tool_input.nested_node_config is None:
+                    raise ToolParameterError(f"Invalid nested_node parameter '{parameter_name}'")
+                config = tool_input.nested_node_config
+                # Variable format: use output_selector directly
+                # Mention format: use extractor_node_id + output_selector
+                use_extractor = not is_variable_format(tool_input.value)
+                try:
+                    parameter_value, found = variable_pool.resolve_nested_node(
+                        config.model_dump(), use_extractor=use_extractor, parameter_name=parameter_name
+                    )
+                    if not found and parameter.required:
+                        raise ToolParameterError(f"Value not found for required parameter '{parameter_name}'")
+                    if not found:
+                        continue
+                except ValueError as e:
+                    raise ToolParameterError(str(e)) from e
             elif tool_input.type in {"mixed", "constant"}:
-                segment_group = variable_pool.convert_template(str(tool_input.value))
+                template = str(tool_input.value)
+                segment_group = variable_pool.convert_template(template)
                 parameter_value = segment_group.log if for_log else segment_group.text
             else:
                 raise ToolParameterError(f"Unknown tool input type '{tool_input.type}'")
@@ -244,7 +269,7 @@ class ToolNode(Node[ToolNodeData]):
 
         text = ""
         files: list[File] = []
-        json: list[dict] = []
+        json: list[dict | list] = []
 
         variables: dict[str, Any] = {}
 
@@ -400,7 +425,7 @@ class ToolNode(Node[ToolNodeData]):
                         message.message.metadata = dict_metadata
 
         # Add agent_logs to outputs['json'] to ensure frontend can access thinking process
-        json_output: list[dict[str, Any]] = []
+        json_output: list[dict[str, Any] | list[Any]] = []
 
         # Step 2: normalize JSON into {"data": [...]}.change json to list[dict]
         if json:
@@ -470,30 +495,102 @@ class ToolNode(Node[ToolNodeData]):
         node_data: Mapping[str, Any],
     ) -> Mapping[str, Sequence[str]]:
         """
-        Extract variable selector to variable mapping
-        :param graph_config: graph config
-        :param node_id: node id
+        Extract variable selector to variable mapping.
+
+        This method extracts:
+        1. Variable references from tool parameters (mixed, variable types)
+        2. Output selector from nested_node_config
+        3. Variable references from nested nodes (nodes with parent_node_id == node_id)
+
+        :param graph_config: graph config containing all nodes
+        :param node_id: current node id
         :param node_data: node data
-        :return:
+        :return: mapping of variable key to variable selector
         """
         # Create typed NodeData from dict
         typed_node_data = ToolNodeData.model_validate(node_data)
 
-        result = {}
+        result: dict[str, Sequence[str]] = {}
         for parameter_name in typed_node_data.tool_parameters:
             input = typed_node_data.tool_parameters[parameter_name]
-            if input.type == "mixed":
-                assert isinstance(input.value, str)
-                selectors = VariableTemplateParser(input.value).extract_variable_selectors()
-                for selector in selectors:
-                    result[selector.variable] = selector.value_selector
-            elif input.type == "variable":
-                selector_key = ".".join(input.value)
-                result[f"#{selector_key}#"] = input.value
-            elif input.type == "constant":
-                pass
+            match input.type:
+                case "mixed":
+                    assert isinstance(input.value, str)
+                    selectors = VariableTemplateParser(input.value).extract_variable_selectors()
+                    for selector in selectors:
+                        result[selector.variable] = selector.value_selector
+                case "variable":
+                    if isinstance(input.value, list):
+                        selector_key = ".".join(input.value)
+                        result[f"#{selector_key}#"] = input.value
+                case "nested_node":
+                    # Nested node type: extract variable selector from nested_node_config
+                    # The full selector is extractor_node_id + output_selector
+                    if input.nested_node_config is not None:
+                        config = input.nested_node_config
+                        full_selector = [config.extractor_node_id] + list(config.output_selector)
+                        selector_key = ".".join(full_selector)
+                        result[f"#{selector_key}#"] = full_selector
+                case "constant":
+                    pass
 
         result = {node_id + "." + key: value for key, value in result.items()}
+
+        # Extract variable references from nested nodes (nodes with parent_node_id == node_id)
+        nested_node_mapping = cls._extract_nested_node_variable_mapping(
+            graph_config=graph_config, parent_node_id=node_id
+        )
+        result.update(nested_node_mapping)
+
+        return result
+
+    @classmethod
+    def _extract_nested_node_variable_mapping(
+        cls,
+        *,
+        graph_config: Mapping[str, Any],
+        parent_node_id: str,
+    ) -> dict[str, Sequence[str]]:
+        """
+        Extract variable references from nested nodes.
+
+        Nested nodes are nodes with parent_node_id pointing to the current node.
+        They are typically extractor LLM nodes that extract values from list[PromptMessage].
+
+        :param graph_config: graph config containing all nodes
+        :param parent_node_id: the parent node id to find nested nodes for
+        :return: mapping of variable key to variable selector
+        """
+        from core.workflow.nodes.node_mapping import NODE_TYPE_CLASSES_MAPPING
+
+        result: dict[str, Sequence[str]] = {}
+        nodes = graph_config.get("nodes", [])
+
+        for node_config in nodes:
+            node_data = node_config.get("data", {})
+            # Find nodes that are nested under the parent node
+            if node_data.get("parent_node_id") != parent_node_id:
+                continue
+
+            nested_node_id = node_config.get("id")
+            if not nested_node_id:
+                continue
+
+            # Get nested node class and extract its variable references
+            try:
+                node_type = NodeType(node_data.get("type"))
+                if node_type not in NODE_TYPE_CLASSES_MAPPING:
+                    continue
+                node_version = node_data.get("version", "1")
+                node_cls = NODE_TYPE_CLASSES_MAPPING[node_type][node_version]
+
+                nested_variable_mapping = node_cls.extract_variable_selector_to_variable_mapping(
+                    graph_config=graph_config, config=node_config
+                )
+                result.update(nested_variable_mapping)
+            except (NotImplementedError, ValueError, KeyError):
+                # Skip if node type is not found or extraction fails
+                continue
 
         return result
 

@@ -1,31 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { produce } from 'immer'
-import { EditionType, VarType } from '../../types'
-import type { Memory, PromptItem, ValueSelector, Var, Variable } from '../../types'
-import { useStore } from '../../store'
-import {
-  useIsChatMode,
-  useNodesReadOnly,
-} from '../../hooks'
-import useAvailableVarList from '../_base/hooks/use-available-var-list'
-import useConfigVision from '../../hooks/use-config-vision'
+import type { Memory, PromptItem, PromptTemplateItem, ValueSelector, Var, Variable } from '../../types'
 import type { LLMNodeType, StructuredOutput } from './types'
-import { useModelList, useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import { produce } from 'immer'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useStore as useAppStore } from '@/app/components/app/store'
+import { useFeatures } from '@/app/components/base/features/hooks'
+import { checkHasContextBlock, checkHasHistoryBlock, checkHasQueryBlock } from '@/app/components/base/prompt-editor/constants'
 import {
   ModelFeatureEnum,
   ModelTypeEnum,
 } from '@/app/components/header/account-setting/model-provider-page/declarations'
-import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
-import { checkHasContextBlock, checkHasHistoryBlock, checkHasQueryBlock } from '@/app/components/base/prompt-editor/constants'
+import { useModelList, useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
 import useInspectVarsCrud from '@/app/components/workflow/hooks/use-inspect-vars-crud'
+import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
 import { AppModeEnum } from '@/types/app'
+import {
+  useIsChatMode,
+  useNodesReadOnly,
+} from '../../hooks'
+import useConfigVision from '../../hooks/use-config-vision'
+import { useStore } from '../../store'
+import { EditionType, VarType } from '../../types'
+import useAvailableVarList from '../_base/hooks/use-available-var-list'
 
 const useConfig = (id: string, payload: LLMNodeType) => {
   const { nodesReadOnly: readOnly } = useNodesReadOnly()
   const isChatMode = useIsChatMode()
+  const isSandboxRuntime = useAppStore(s => s.appDetail?.runtime_type === 'sandboxed')
+  const features = useFeatures(s => s.features)
+  const isSupportSandbox = isSandboxRuntime || features.sandbox?.enabled === true
 
   const defaultConfig = useStore(s => s.nodesDefaultConfigs)?.[payload.type]
-  const [defaultRolePrefix, setDefaultRolePrefix] = useState<{ user: string; assistant: string }>({ user: '', assistant: '' })
+  const [defaultRolePrefix, setDefaultRolePrefix] = useState<{ user: string, assistant: string }>({ user: '', assistant: '' })
   const { inputs, setInputs: doSetInputs } = useNodeCrud<LLMNodeType>(id, payload)
   const inputRef = useRef(inputs)
   useEffect(() => {
@@ -35,17 +40,47 @@ const useConfig = (id: string, payload: LLMNodeType) => {
   const { deleteNodeInspectorVars } = useInspectVarsCrud()
 
   const setInputs = useCallback((newInputs: LLMNodeType) => {
+    let newPayload = { ...newInputs }
     if (newInputs.memory && !newInputs.memory.role_prefix) {
-      const newPayload = produce(newInputs, (draft) => {
+      newPayload = produce(newInputs, (draft) => {
         draft.memory!.role_prefix = defaultRolePrefix
       })
-      doSetInputs(newPayload)
-      inputRef.current = newPayload
-      return
     }
-    doSetInputs(newInputs)
-    inputRef.current = newInputs
-  }, [doSetInputs, defaultRolePrefix])
+
+    // sandbox engine
+    if (isSupportSandbox) {
+      const isSupportSkill = !!newPayload.computer_use
+      if (Array.isArray(newPayload.prompt_template)) {
+        newPayload = produce(newPayload, (draft) => {
+          draft.prompt_template = (draft.prompt_template as PromptItem[]).map((item) => {
+            return {
+              ...item,
+              skill: isSupportSkill,
+            }
+          })
+        })
+      }
+      else {
+        newPayload = produce(newPayload, (draft) => {
+          draft.prompt_template = {
+            ...draft.prompt_template,
+            skill: isSupportSkill,
+          }
+        })
+      }
+
+      newPayload = produce(newPayload, (draft) => {
+        delete draft.reasoning_format
+      })
+    }
+    else {
+      newPayload = produce(newPayload, (draft) => {
+        draft.computer_use = false
+      })
+    }
+    doSetInputs(newPayload)
+    inputRef.current = newPayload
+  }, [doSetInputs, defaultRolePrefix, isSupportSandbox])
 
   // model
   const model = inputs.model
@@ -128,7 +163,7 @@ const useConfig = (id: string, payload: LLMNodeType) => {
     },
   })
 
-  const handleModelChanged = useCallback((model: { provider: string; modelId: string; mode?: string }) => {
+  const handleModelChanged = useCallback((model: { provider: string, modelId: string, mode?: string }) => {
     const newInputs = produce(inputRef.current, (draft) => {
       draft.model.provider = model.provider
       draft.model.name = model.modelId
@@ -154,6 +189,13 @@ const useConfig = (id: string, payload: LLMNodeType) => {
   const handleCompletionParamsChange = useCallback((newParams: Record<string, any>) => {
     const newInputs = produce(inputRef.current, (draft) => {
       draft.model.completion_params = newParams
+    })
+    setInputs(newInputs)
+  }, [setInputs])
+
+  const handleComputerUseChange = useCallback((enabled: boolean) => {
+    const newInputs = produce(inputRef.current, (draft) => {
+      draft.computer_use = enabled
     })
     setInputs(newInputs)
   }, [setInputs])
@@ -249,7 +291,7 @@ const useConfig = (id: string, payload: LLMNodeType) => {
     setInputs(newInputs)
   }, [setInputs])
 
-  const handlePromptChange = useCallback((newPrompt: PromptItem[] | PromptItem) => {
+  const handlePromptChange = useCallback((newPrompt: PromptTemplateItem[] | PromptItem) => {
     const newInputs = produce(inputRef.current, (draft) => {
       draft.prompt_template = newPrompt
     })
@@ -283,10 +325,17 @@ const useConfig = (id: string, payload: LLMNodeType) => {
 
   // structure output
   const { data: modelList } = useModelList(ModelTypeEnum.textGeneration)
-  const isModelSupportStructuredOutput = modelList
+  const currentModelFeatures = modelList
     ?.find(provideItem => provideItem.provider === model?.provider)
-    ?.models.find(modelItem => modelItem.model === model?.name)
-    ?.features?.includes(ModelFeatureEnum.StructuredOutput)
+    ?.models
+    .find(modelItem => modelItem.model === model?.name)
+    ?.features
+
+  const isModelSupportStructuredOutput = currentModelFeatures?.includes(ModelFeatureEnum.StructuredOutput)
+
+  const isModelSupportToolCall = currentModelFeatures?.some(
+    feature => [ModelFeatureEnum.toolCall, ModelFeatureEnum.multiToolCall, ModelFeatureEnum.streamToolCall].includes(feature),
+  )
 
   const [structuredOutputCollapsed, setStructuredOutputCollapsed] = useState(true)
   const handleStructureOutputEnableChange = useCallback((enabled: boolean) => {
@@ -321,11 +370,14 @@ const useConfig = (id: string, payload: LLMNodeType) => {
 
   // reasoning format
   const handleReasoningFormatChange = useCallback((reasoningFormat: 'tagged' | 'separated') => {
+    if (isSupportSandbox)
+      return
+
     const newInputs = produce(inputRef.current, (draft) => {
       draft.reasoning_format = reasoningFormat
     })
     setInputs(newInputs)
-  }, [setInputs])
+  }, [isSupportSandbox, setInputs])
 
   const {
     availableVars,
@@ -362,12 +414,15 @@ const useConfig = (id: string, payload: LLMNodeType) => {
     handleVisionResolutionEnabledChange,
     handleVisionResolutionChange,
     isModelSupportStructuredOutput,
+    isModelSupportToolCall,
     handleStructureOutputChange,
     structuredOutputCollapsed,
     setStructuredOutputCollapsed,
     handleStructureOutputEnableChange,
     filterJinja2InputVar,
     handleReasoningFormatChange,
+    isSupportSandbox,
+    handleComputerUseChange,
   }
 }
 

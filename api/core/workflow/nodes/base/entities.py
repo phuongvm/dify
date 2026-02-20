@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from abc import ABC
 from builtins import type as type_
@@ -111,9 +113,9 @@ class DefaultValue(BaseModel):
             raise DefaultValueTypeError(f"Cannot convert to number: {value}")
 
     @model_validator(mode="after")
-    def validate_value_type(self) -> "DefaultValue":
+    def validate_value_type(self) -> DefaultValue:
         # Type validation configuration
-        type_validators = {
+        type_validators: dict[DefaultValueType, dict[str, Any]] = {
             DefaultValueType.STRING: {
                 "type": str,
                 "converter": lambda x: x,
@@ -172,6 +174,16 @@ class BaseNodeData(ABC, BaseModel):
     error_strategy: ErrorStrategy | None = None
     default_value: list[DefaultValue] | None = None
     retry_config: RetryConfig = RetryConfig()
+
+    # Parent node ID when this node is used as an extractor.
+    # If set, this node is an "attached" extractor node that extracts values
+    # from list[PromptMessage] for the parent node's parameters.
+    parent_node_id: str | None = None
+
+    @property
+    def is_extractor_node(self) -> bool:
+        """Check if this node is an extractor node (has parent_node_id)."""
+        return self.parent_node_id is not None
 
     @property
     def default_value_dict(self) -> dict[str, Any]:

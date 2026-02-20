@@ -1,16 +1,18 @@
 'use client'
 import type { FC, ReactNode } from 'react'
-import React, { useCallback, useMemo } from 'react'
 import { RiDeleteBinLine } from '@remixicon/react'
-import Input from '@/app/components/base/input'
+import * as React from 'react'
+import { useCallback, useMemo } from 'react'
 import Checkbox from '@/app/components/base/checkbox'
+import Input from '@/app/components/base/input'
 import { SimpleSelect } from '@/app/components/base/select'
+import { cn } from '@/utils/classnames'
 import { replaceSpaceWithUnderscoreInVarNameInput } from '@/utils/var'
-import cn from '@/utils/classnames'
 
 // Tiny utility to judge whether a cell value is effectively present
 const isPresent = (v: unknown): boolean => {
-  if (typeof v === 'string') return v.trim() !== ''
+  if (typeof v === 'string')
+    return v.trim() !== ''
   return !(v === '' || v === null || v === undefined || v === false)
 }
 // Column configuration types for table components
@@ -102,14 +104,17 @@ const GenericTable: FC<GenericTableProps> = ({
   }, [data, emptyRowData, readonly])
 
   const removeRow = useCallback((dataIndex: number) => {
-    if (readonly) return
-    if (dataIndex < 0 || dataIndex >= data.length) return // ignore virtual rows
+    if (readonly)
+      return
+    if (dataIndex < 0 || dataIndex >= data.length)
+      return // ignore virtual rows
     const newData = data.filter((_, i) => i !== dataIndex)
     onChange(newData)
   }, [data, readonly, onChange])
 
   const updateRow = useCallback((dataIndex: number | null, key: string, value: unknown) => {
-    if (readonly) return
+    if (readonly)
+      return
 
     if (dataIndex !== null && dataIndex < data.length) {
       // Editing existing configured row
@@ -158,7 +163,7 @@ const GenericTable: FC<GenericTableProps> = ({
               // Ghost/inline style: looks like plain text until focus/hover
               'h-6 rounded-none border-0 bg-transparent px-0 py-0 shadow-none',
               'hover:border-transparent hover:bg-transparent focus:border-transparent focus:bg-transparent',
-              'system-sm-regular text-text-secondary placeholder:text-text-quaternary',
+              'text-text-secondary system-sm-regular placeholder:text-text-quaternary',
             )}
           />
         )
@@ -207,7 +212,7 @@ const GenericTable: FC<GenericTableProps> = ({
     return (
       <div className="rounded-lg border border-divider-regular">
         {showHeader && (
-          <div className="system-xs-medium-uppercase flex h-7 items-center leading-7 text-text-tertiary">
+          <div className="flex h-7 items-center leading-7 text-text-tertiary system-xs-medium-uppercase">
             {columns.map((column, index) => (
               <div
                 key={column.key}
@@ -280,16 +285,18 @@ const GenericTable: FC<GenericTableProps> = ({
   return (
     <div className={className}>
       <div className="mb-3 flex items-center justify-between">
-        <h4 className="system-sm-semibold-uppercase text-text-secondary">{title}</h4>
+        <h4 className="text-text-secondary system-sm-semibold-uppercase">{title}</h4>
       </div>
 
-      {showPlaceholder ? (
-        <div className="flex h-7 items-center justify-center rounded-lg border border-divider-regular bg-components-panel-bg text-xs font-normal leading-[18px] text-text-quaternary">
-          {placeholder}
-        </div>
-      ) : (
-        renderTable()
-      )}
+      {showPlaceholder
+        ? (
+            <div className="flex h-7 items-center justify-center rounded-lg border border-divider-regular bg-components-panel-bg text-xs font-normal leading-[18px] text-text-quaternary">
+              {placeholder}
+            </div>
+          )
+        : (
+            renderTable()
+          )}
     </div>
   )
 }

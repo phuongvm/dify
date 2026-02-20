@@ -12,6 +12,7 @@ from werkzeug.exceptions import Forbidden, InternalServerError, NotFound
 import services
 from controllers.console import console_ns
 from controllers.console.app.error import ConversationCompletedError, DraftWorkflowNotExist, DraftWorkflowNotSync
+from controllers.console.app.workflow_run import workflow_run_node_execution_model
 from controllers.console.app.wraps import get_app_model
 from controllers.console.wraps import account_initialization_required, edit_permission_required, setup_required
 from controllers.web.error import InvokeRateLimitError as InvokeRateLimitHttpError
@@ -32,10 +33,11 @@ from core.trigger.debug.event_selectors import (
 from core.workflow.enums import NodeType
 from core.workflow.graph_engine.manager import GraphEngineManager
 from extensions.ext_database import db
+from extensions.ext_redis import redis_client
 from factories import file_factory, variable_factory
 from fields.member_fields import simple_account_fields
+from fields.online_user_fields import online_user_list_fields
 from fields.workflow_fields import workflow_fields, workflow_pagination_fields
-from fields.workflow_run_fields import workflow_run_node_execution_fields
 from libs import helper
 from libs.datetime_utils import naive_utc_now
 from libs.helper import TimestampField, uuid_value
@@ -43,9 +45,12 @@ from libs.login import current_account_with_tenant, login_required
 from models import App
 from models.model import AppMode
 from models.workflow import Workflow
+from repositories.workflow_collaboration_repository import WORKFLOW_ONLINE_USERS_PREFIX
 from services.app_generate_service import AppGenerateService
 from services.errors.app import WorkflowHashNotEqualError
 from services.errors.llm import InvokeRateLimitError
+from services.workflow.entities import NestedNodeGraphRequest, NestedNodeParameterSchema
+from services.workflow.nested_node_graph_service import NestedNodeGraphService
 from services.workflow_service import DraftWorkflowDeletionError, WorkflowInUseError, WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -87,26 +92,6 @@ workflow_model = console_ns.model("Workflow", workflow_fields_copy)
 workflow_pagination_fields_copy = workflow_pagination_fields.copy()
 workflow_pagination_fields_copy["items"] = fields.List(fields.Nested(workflow_model), attribute="items")
 workflow_pagination_model = console_ns.model("WorkflowPagination", workflow_pagination_fields_copy)
-
-# Reuse workflow_run_node_execution_model from workflow_run.py if already registered
-# Otherwise register it here
-from fields.end_user_fields import simple_end_user_fields
-
-simple_end_user_model = None
-try:
-    simple_end_user_model = console_ns.models.get("SimpleEndUser")
-except AttributeError:
-    pass
-if simple_end_user_model is None:
-    simple_end_user_model = console_ns.model("SimpleEndUser", simple_end_user_fields)
-
-workflow_run_node_execution_model = None
-try:
-    workflow_run_node_execution_model = console_ns.models.get("WorkflowRunNodeExecution")
-except AttributeError:
-    pass
-if workflow_run_node_execution_model is None:
-    workflow_run_node_execution_model = console_ns.model("WorkflowRunNodeExecution", workflow_run_node_execution_fields)
 
 
 class SyncDraftWorkflowPayload(BaseModel):
@@ -180,12 +165,29 @@ class WorkflowUpdatePayload(BaseModel):
     marked_comment: str | None = Field(default=None, max_length=100)
 
 
+class WorkflowFeaturesPayload(BaseModel):
+    features: dict[str, Any] = Field(..., description="Workflow feature configuration")
+
+
+class WorkflowOnlineUsersQuery(BaseModel):
+    workflow_ids: str = Field(..., description="Comma-separated workflow IDs")
+
+
 class DraftWorkflowTriggerRunPayload(BaseModel):
     node_id: str
 
 
 class DraftWorkflowTriggerRunAllPayload(BaseModel):
     node_ids: list[str]
+
+
+class NestedNodeGraphPayload(BaseModel):
+    """Request payload for generating nested node graph."""
+
+    parent_node_id: str = Field(description="ID of the parent node that uses the extracted value")
+    parameter_key: str = Field(description="Key of the parameter being extracted")
+    context_source: list[str] = Field(description="Variable selector for the context source")
+    parameter_schema: dict[str, Any] = Field(description="Schema of the parameter to extract")
 
 
 def reg(cls: type[BaseModel]):
@@ -203,8 +205,11 @@ reg(DefaultBlockConfigQuery)
 reg(ConvertToWorkflowPayload)
 reg(WorkflowListQuery)
 reg(WorkflowUpdatePayload)
+reg(WorkflowFeaturesPayload)
+reg(WorkflowOnlineUsersQuery)
 reg(DraftWorkflowTriggerRunPayload)
 reg(DraftWorkflowTriggerRunAllPayload)
+reg(NestedNodeGraphPayload)
 
 
 # TODO(QuantumGhost): Refactor existing node run API to handle file parameter parsing
@@ -470,7 +475,7 @@ class AdvancedChatDraftRunLoopNodeApi(Resource):
         Run draft workflow loop node
         """
         current_user, _ = current_account_with_tenant()
-        args = LoopNodeRunPayload.model_validate(console_ns.payload or {}).model_dump(exclude_none=True)
+        args = LoopNodeRunPayload.model_validate(console_ns.payload or {})
 
         try:
             response = AppGenerateService.generate_single_loop(
@@ -508,7 +513,7 @@ class WorkflowDraftRunLoopNodeApi(Resource):
         Run draft workflow loop node
         """
         current_user, _ = current_account_with_tenant()
-        args = LoopNodeRunPayload.model_validate(console_ns.payload or {}).model_dump(exclude_none=True)
+        args = LoopNodeRunPayload.model_validate(console_ns.payload or {})
 
         try:
             response = AppGenerateService.generate_single_loop(
@@ -525,6 +530,179 @@ class WorkflowDraftRunLoopNodeApi(Resource):
         except Exception:
             logger.exception("internal server error.")
             raise InternalServerError()
+
+
+class HumanInputFormPreviewPayload(BaseModel):
+    inputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Values used to fill missing upstream variables referenced in form_content",
+    )
+
+
+class HumanInputFormSubmitPayload(BaseModel):
+    form_inputs: dict[str, Any] = Field(..., description="Values the user provides for the form's own fields")
+    inputs: dict[str, Any] = Field(
+        ...,
+        description="Values used to fill missing upstream variables referenced in form_content",
+    )
+    action: str = Field(..., description="Selected action ID")
+
+
+class HumanInputDeliveryTestPayload(BaseModel):
+    delivery_method_id: str = Field(..., description="Delivery method ID")
+    inputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Values used to fill missing upstream variables referenced in form_content",
+    )
+
+
+reg(HumanInputFormPreviewPayload)
+reg(HumanInputFormSubmitPayload)
+reg(HumanInputDeliveryTestPayload)
+
+
+@console_ns.route("/apps/<uuid:app_id>/advanced-chat/workflows/draft/human-input/nodes/<string:node_id>/form/preview")
+class AdvancedChatDraftHumanInputFormPreviewApi(Resource):
+    @console_ns.doc("get_advanced_chat_draft_human_input_form")
+    @console_ns.doc(description="Get human input form preview for advanced chat workflow")
+    @console_ns.doc(params={"app_id": "Application ID", "node_id": "Node ID"})
+    @console_ns.expect(console_ns.models[HumanInputFormPreviewPayload.__name__])
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.ADVANCED_CHAT])
+    @edit_permission_required
+    def post(self, app_model: App, node_id: str):
+        """
+        Preview human input form content and placeholders
+        """
+        current_user, _ = current_account_with_tenant()
+        args = HumanInputFormPreviewPayload.model_validate(console_ns.payload or {})
+        inputs = args.inputs
+
+        workflow_service = WorkflowService()
+        preview = workflow_service.get_human_input_form_preview(
+            app_model=app_model,
+            account=current_user,
+            node_id=node_id,
+            inputs=inputs,
+        )
+        return jsonable_encoder(preview)
+
+
+@console_ns.route("/apps/<uuid:app_id>/advanced-chat/workflows/draft/human-input/nodes/<string:node_id>/form/run")
+class AdvancedChatDraftHumanInputFormRunApi(Resource):
+    @console_ns.doc("submit_advanced_chat_draft_human_input_form")
+    @console_ns.doc(description="Submit human input form preview for advanced chat workflow")
+    @console_ns.doc(params={"app_id": "Application ID", "node_id": "Node ID"})
+    @console_ns.expect(console_ns.models[HumanInputFormSubmitPayload.__name__])
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.ADVANCED_CHAT])
+    @edit_permission_required
+    def post(self, app_model: App, node_id: str):
+        """
+        Submit human input form preview
+        """
+        current_user, _ = current_account_with_tenant()
+        args = HumanInputFormSubmitPayload.model_validate(console_ns.payload or {})
+        workflow_service = WorkflowService()
+        result = workflow_service.submit_human_input_form_preview(
+            app_model=app_model,
+            account=current_user,
+            node_id=node_id,
+            form_inputs=args.form_inputs,
+            inputs=args.inputs,
+            action=args.action,
+        )
+        return jsonable_encoder(result)
+
+
+@console_ns.route("/apps/<uuid:app_id>/workflows/draft/human-input/nodes/<string:node_id>/form/preview")
+class WorkflowDraftHumanInputFormPreviewApi(Resource):
+    @console_ns.doc("get_workflow_draft_human_input_form")
+    @console_ns.doc(description="Get human input form preview for workflow")
+    @console_ns.doc(params={"app_id": "Application ID", "node_id": "Node ID"})
+    @console_ns.expect(console_ns.models[HumanInputFormPreviewPayload.__name__])
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.WORKFLOW])
+    @edit_permission_required
+    def post(self, app_model: App, node_id: str):
+        """
+        Preview human input form content and placeholders
+        """
+        current_user, _ = current_account_with_tenant()
+        args = HumanInputFormPreviewPayload.model_validate(console_ns.payload or {})
+        inputs = args.inputs
+
+        workflow_service = WorkflowService()
+        preview = workflow_service.get_human_input_form_preview(
+            app_model=app_model,
+            account=current_user,
+            node_id=node_id,
+            inputs=inputs,
+        )
+        return jsonable_encoder(preview)
+
+
+@console_ns.route("/apps/<uuid:app_id>/workflows/draft/human-input/nodes/<string:node_id>/form/run")
+class WorkflowDraftHumanInputFormRunApi(Resource):
+    @console_ns.doc("submit_workflow_draft_human_input_form")
+    @console_ns.doc(description="Submit human input form preview for workflow")
+    @console_ns.doc(params={"app_id": "Application ID", "node_id": "Node ID"})
+    @console_ns.expect(console_ns.models[HumanInputFormSubmitPayload.__name__])
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.WORKFLOW])
+    @edit_permission_required
+    def post(self, app_model: App, node_id: str):
+        """
+        Submit human input form preview
+        """
+        current_user, _ = current_account_with_tenant()
+        workflow_service = WorkflowService()
+        args = HumanInputFormSubmitPayload.model_validate(console_ns.payload or {})
+        result = workflow_service.submit_human_input_form_preview(
+            app_model=app_model,
+            account=current_user,
+            node_id=node_id,
+            form_inputs=args.form_inputs,
+            inputs=args.inputs,
+            action=args.action,
+        )
+        return jsonable_encoder(result)
+
+
+@console_ns.route("/apps/<uuid:app_id>/workflows/draft/human-input/nodes/<string:node_id>/delivery-test")
+class WorkflowDraftHumanInputDeliveryTestApi(Resource):
+    @console_ns.doc("test_workflow_draft_human_input_delivery")
+    @console_ns.doc(description="Test human input delivery for workflow")
+    @console_ns.doc(params={"app_id": "Application ID", "node_id": "Node ID"})
+    @console_ns.expect(console_ns.models[HumanInputDeliveryTestPayload.__name__])
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.WORKFLOW, AppMode.ADVANCED_CHAT])
+    @edit_permission_required
+    def post(self, app_model: App, node_id: str):
+        """
+        Test human input delivery
+        """
+        current_user, _ = current_account_with_tenant()
+        workflow_service = WorkflowService()
+        args = HumanInputDeliveryTestPayload.model_validate(console_ns.payload or {})
+        workflow_service.test_human_input_delivery(
+            app_model=app_model,
+            account=current_user,
+            node_id=node_id,
+            delivery_method_id=args.delivery_method_id,
+            inputs=args.inputs,
+        )
+        return jsonable_encoder({})
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflows/draft/run")
@@ -674,13 +852,14 @@ class PublishedWorkflowApi(Resource):
         """
         Publish workflow
         """
+        from services.app_bundle_service import AppBundleService
+
         current_user, _ = current_account_with_tenant()
 
         args = PublishWorkflowPayload.model_validate(console_ns.payload or {})
 
-        workflow_service = WorkflowService()
         with Session(db.engine) as session:
-            workflow = workflow_service.publish_workflow(
+            workflow = AppBundleService.publish(
                 session=session,
                 app_model=app_model,
                 account=current_user,
@@ -789,6 +968,31 @@ class ConvertToWorkflowApi(Resource):
         return {
             "new_app_id": new_app_model.id,
         }
+
+
+@console_ns.route("/apps/<uuid:app_id>/workflows/draft/features")
+class WorkflowFeaturesApi(Resource):
+    """Update draft workflow features."""
+
+    @console_ns.expect(console_ns.models[WorkflowFeaturesPayload.__name__])
+    @console_ns.doc("update_workflow_features")
+    @console_ns.doc(description="Update draft workflow features")
+    @console_ns.doc(params={"app_id": "Application ID"})
+    @console_ns.response(200, "Workflow features updated successfully")
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.ADVANCED_CHAT, AppMode.WORKFLOW])
+    def post(self, app_model: App):
+        current_user, _ = current_account_with_tenant()
+
+        args = WorkflowFeaturesPayload.model_validate(console_ns.payload or {})
+        features = args.features
+
+        workflow_service = WorkflowService()
+        workflow_service.update_draft_workflow_features(app_model=app_model, features=features, account=current_user)
+
+        return {"result": "success"}
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflows")
@@ -999,6 +1203,7 @@ class DraftWorkflowTriggerRunApi(Resource):
             if not event:
                 return jsonable_encoder({"status": "waiting", "retry_in": LISTENING_RETRY_IN})
             workflow_args = dict(event.workflow_args)
+
             workflow_args[SKIP_PREPARE_USER_INPUTS_KEY] = True
             return helper.compact_generate_response(
                 AppGenerateService.generate(
@@ -1147,6 +1352,7 @@ class DraftWorkflowTriggerRunAllApi(Resource):
 
         try:
             workflow_args = dict(trigger_debug_event.workflow_args)
+
             workflow_args[SKIP_PREPARE_USER_INPUTS_KEY] = True
             response = AppGenerateService.generate(
                 app_model=app_model,
@@ -1166,3 +1372,83 @@ class DraftWorkflowTriggerRunAllApi(Resource):
                     "status": "error",
                 }
             ), 400
+
+
+@console_ns.route("/apps/<uuid:app_id>/workflows/draft/nested-node-graph")
+class NestedNodeGraphApi(Resource):
+    """
+    API for generating Nested Node LLM graph structures.
+
+    This endpoint creates a complete graph structure containing an LLM node
+    configured to extract values from list[PromptMessage] variables.
+    """
+
+    @console_ns.doc("generate_nested_node_graph")
+    @console_ns.doc(description="Generate a Nested Node LLM graph structure")
+    @console_ns.doc(params={"app_id": "Application ID"})
+    @console_ns.expect(console_ns.models[NestedNodeGraphPayload.__name__])
+    @console_ns.response(200, "Nested node graph generated successfully")
+    @console_ns.response(400, "Invalid request parameters")
+    @console_ns.response(403, "Permission denied")
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @get_app_model(mode=[AppMode.ADVANCED_CHAT, AppMode.WORKFLOW])
+    @edit_permission_required
+    def post(self, app_model: App):
+        """
+        Generate a Nested Node LLM graph structure.
+
+        Returns a complete graph structure containing a single LLM node
+        configured for extracting values from list[PromptMessage] context.
+        """
+
+        payload = NestedNodeGraphPayload.model_validate(console_ns.payload or {})
+
+        parameter_schema = NestedNodeParameterSchema(
+            name=payload.parameter_schema.get("name", payload.parameter_key),
+            type=payload.parameter_schema.get("type", "string"),
+            description=payload.parameter_schema.get("description", ""),
+        )
+
+        request = NestedNodeGraphRequest(
+            parent_node_id=payload.parent_node_id,
+            parameter_key=payload.parameter_key,
+            context_source=payload.context_source,
+            parameter_schema=parameter_schema,
+        )
+
+        with Session(db.engine) as session:
+            service = NestedNodeGraphService(session)
+            response = service.generate_nested_node_graph(tenant_id=app_model.tenant_id, request=request)
+
+        return response.model_dump()
+
+
+@console_ns.route("/apps/workflows/online-users")
+class WorkflowOnlineUsersApi(Resource):
+    @console_ns.expect(console_ns.models[WorkflowOnlineUsersQuery.__name__])
+    @console_ns.doc("get_workflow_online_users")
+    @console_ns.doc(description="Get workflow online users")
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @marshal_with(online_user_list_fields)
+    def get(self):
+        args = WorkflowOnlineUsersQuery.model_validate(request.args.to_dict(flat=True))  # type: ignore
+
+        workflow_ids = [workflow_id.strip() for workflow_id in args.workflow_ids.split(",") if workflow_id.strip()]
+
+        results = []
+        for workflow_id in workflow_ids:
+            users_json = redis_client.hgetall(f"{WORKFLOW_ONLINE_USERS_PREFIX}{workflow_id}")
+
+            users = []
+            for _, user_info_json in users_json.items():
+                try:
+                    users.append(json.loads(user_info_json))
+                except Exception:
+                    continue
+            results.append({"workflow_id": workflow_id, "users": users})
+
+        return {"data": results}

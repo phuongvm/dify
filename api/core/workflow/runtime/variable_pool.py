@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -7,10 +9,10 @@ from typing import Annotated, Any, Union, cast
 from pydantic import BaseModel, Field
 
 from core.file import File, FileAttribute, file_manager
-from core.variables import Segment, SegmentGroup, Variable
+from core.variables import Segment, SegmentGroup, VariableBase
 from core.variables.consts import SELECTORS_LENGTH
 from core.variables.segments import FileSegment, ObjectSegment
-from core.variables.variables import RAGPipelineVariableInput, VariableUnion
+from core.variables.variables import RAGPipelineVariableInput, Variable
 from core.workflow.constants import (
     CONVERSATION_VARIABLE_NODE_ID,
     ENVIRONMENT_VARIABLE_NODE_ID,
@@ -30,7 +32,7 @@ class VariablePool(BaseModel):
     # The first element of the selector is the node id, it's the first-level key in the dictionary.
     # Other elements of the selector are the keys in the second-level dictionary. To get the key, we hash the
     # elements of the selector except the first one.
-    variable_dictionary: defaultdict[str, Annotated[dict[str, VariableUnion], Field(default_factory=dict)]] = Field(
+    variable_dictionary: defaultdict[str, Annotated[dict[str, Variable], Field(default_factory=dict)]] = Field(
         description="Variables mapping",
         default=defaultdict(dict),
     )
@@ -42,15 +44,15 @@ class VariablePool(BaseModel):
     )
     system_variables: SystemVariable = Field(
         description="System variables",
-        default_factory=SystemVariable.empty,
+        default_factory=SystemVariable.default,
     )
-    environment_variables: Sequence[VariableUnion] = Field(
+    environment_variables: Sequence[Variable] = Field(
         description="Environment variables.",
-        default_factory=list[VariableUnion],
+        default_factory=list[Variable],
     )
-    conversation_variables: Sequence[VariableUnion] = Field(
+    conversation_variables: Sequence[Variable] = Field(
         description="Conversation variables.",
-        default_factory=list[VariableUnion],
+        default_factory=list[Variable],
     )
     rag_pipeline_variables: list[RAGPipelineVariableInput] = Field(
         description="RAG pipeline variables.",
@@ -103,7 +105,7 @@ class VariablePool(BaseModel):
                 f"got {len(selector)} elements"
             )
 
-        if isinstance(value, Variable):
+        if isinstance(value, VariableBase):
             variable = value
         elif isinstance(value, Segment):
             variable = variable_factory.segment_to_variable(segment=value, selector=selector)
@@ -112,9 +114,9 @@ class VariablePool(BaseModel):
             variable = variable_factory.segment_to_variable(segment=segment, selector=selector)
 
         node_id, name = self._selector_to_keys(selector)
-        # Based on the definition of `VariableUnion`,
-        # `list[Variable]` can be safely used as `list[VariableUnion]` since they are compatible.
-        self.variable_dictionary[node_id][name] = cast(VariableUnion, variable)
+        # Based on the definition of `Variable`,
+        # `VariableBase` instances can be safely used as `Variable` since they are compatible.
+        self.variable_dictionary[node_id][name] = cast(Variable, variable)
 
     @classmethod
     def _selector_to_keys(cls, selector: Sequence[str]) -> tuple[str, str]:
@@ -266,7 +268,45 @@ class VariablePool(BaseModel):
                 continue
             self.add(selector, value)
 
+    def resolve_nested_node(
+        self,
+        nested_node_config: Mapping[str, Any],
+        /,
+        *,
+        use_extractor: bool = True,
+        parameter_name: str = "",
+    ) -> tuple[Any, bool]:
+        """
+        Resolve a nested_node parameter value.
+
+        Args:
+            nested_node_config: Config dict containing output_selector, null_strategy, default_value,
+                and optionally extractor_node_id
+            use_extractor: If True (mention format), build selector as extractor_node_id + output_selector.
+                If False (variable format), use output_selector directly.
+            parameter_name: Name of the parameter being resolved (for error messages)
+
+        Returns:
+            Tuple of (resolved_value, found)
+        """
+        output_selector = list(nested_node_config.get("output_selector", []))
+        null_strategy = nested_node_config.get("null_strategy", "raise_error")
+        default_value = nested_node_config.get("default_value")
+
+        extractor_node_id = nested_node_config.get("extractor_node_id")
+        if not extractor_node_id:
+            raise ValueError(f"Missing extractor_node_id for parameter '{parameter_name}'")
+        full_selector = [extractor_node_id] + output_selector
+
+        variable = self.get(full_selector)
+        if variable is None:
+            if null_strategy == "use_default":
+                return default_value, False
+            raise ValueError(f"Variable {full_selector} not found for parameter '{parameter_name}'")
+
+        return variable.value, True
+
     @classmethod
-    def empty(cls) -> "VariablePool":
+    def empty(cls) -> VariablePool:
         """Create an empty variable pool."""
-        return cls(system_variables=SystemVariable.empty())
+        return cls(system_variables=SystemVariable.default())

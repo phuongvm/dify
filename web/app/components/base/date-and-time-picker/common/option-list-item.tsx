@@ -1,5 +1,7 @@
-import React, { type FC, useEffect, useRef } from 'react'
-import cn from '@/utils/classnames'
+import type { FC } from 'react'
+import * as React from 'react'
+import { useEffect, useRef } from 'react'
+import { cn } from '@/utils/classnames'
 
 type OptionListItemProps = {
   isSelected: boolean
@@ -24,7 +26,7 @@ const OptionListItem: FC<OptionListItemProps> = ({
     <li
       ref={listItemRef}
       className={cn(
-        'system-xs-medium flex cursor-pointer items-center justify-center rounded-md px-1.5 py-1 text-components-button-ghost-text',
+        'flex cursor-pointer items-center justify-center rounded-md px-1.5 py-1 text-components-button-ghost-text system-xs-medium',
         isSelected ? 'bg-components-button-ghost-bg-hover' : 'hover:bg-components-button-ghost-bg-hover',
       )}
       onClick={() => {

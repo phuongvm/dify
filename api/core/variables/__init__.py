@@ -4,6 +4,7 @@ from .segments import (
     ArrayFileSegment,
     ArrayNumberSegment,
     ArrayObjectSegment,
+    ArrayPromptMessageSegment,
     ArraySegment,
     ArrayStringSegment,
     FileSegment,
@@ -20,6 +21,7 @@ from .variables import (
     ArrayFileVariable,
     ArrayNumberVariable,
     ArrayObjectVariable,
+    ArrayPromptMessageVariable,
     ArrayStringVariable,
     ArrayVariable,
     FileVariable,
@@ -30,6 +32,7 @@ from .variables import (
     SecretVariable,
     StringVariable,
     Variable,
+    VariableBase,
 )
 
 __all__ = [
@@ -41,6 +44,8 @@ __all__ = [
     "ArrayNumberVariable",
     "ArrayObjectSegment",
     "ArrayObjectVariable",
+    "ArrayPromptMessageSegment",
+    "ArrayPromptMessageVariable",
     "ArraySegment",
     "ArrayStringSegment",
     "ArrayStringVariable",
@@ -62,4 +67,5 @@ __all__ = [
     "StringSegment",
     "StringVariable",
     "Variable",
+    "VariableBase",
 ]
