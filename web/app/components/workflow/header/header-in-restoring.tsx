@@ -4,14 +4,13 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import Button from '@/app/components/base/button'
-import { useFeaturesStore } from '@/app/components/base/features/hooks'
-import { useSelector as useAppContextSelector } from '@/context/app-context'
+import { toast } from '@/app/components/base/ui/toast'
 import useTheme from '@/hooks/use-theme'
-import { useInvalidAllLastRun } from '@/service/use-workflow'
+import { useInvalidAllLastRun, useRestoreWorkflow } from '@/service/use-workflow'
+import { getFlowPrefix } from '@/service/utils'
 import { cn } from '@/utils/classnames'
-import Toast from '../../base/toast'
 import {
-  useLeaderRestore,
+  useWorkflowRefreshDraft,
   useWorkflowRun,
 } from '../hooks'
 import { useHooksStore } from '../hooks-store'
@@ -33,8 +32,6 @@ const HeaderInRestoring = ({
   const { t } = useTranslation()
   const { theme } = useTheme()
   const workflowStore = useWorkflowStore()
-  const userProfile = useAppContextSelector(s => s.userProfile)
-  const featuresStore = useFeaturesStore()
   const configsMap = useHooksStore(s => s.configsMap)
   const invalidAllLastRun = useInvalidAllLastRun(configsMap?.flowType, configsMap?.flowId)
   const {
@@ -46,7 +43,9 @@ const HeaderInRestoring = ({
   const {
     handleLoadBackupDraft,
   } = useWorkflowRun()
-  const { requestRestore } = useLeaderRestore()
+  const { handleRefreshWorkflowDraft } = useWorkflowRefreshDraft()
+  const { mutateAsync: restoreWorkflow } = useRestoreWorkflow()
+  const canRestore = !!currentVersion?.id && !!configsMap?.flowId && currentVersion.version !== WorkflowVersion.Draft
 
   const handleCancelRestore = useCallback(() => {
     handleLoadBackupDraft()
@@ -54,62 +53,39 @@ const HeaderInRestoring = ({
     setShowWorkflowVersionHistoryPanel(false)
   }, [workflowStore, handleLoadBackupDraft, setShowWorkflowVersionHistoryPanel])
 
-  const handleRestore = useCallback(() => {
-    if (!currentVersion)
+  const handleRestore = useCallback(async () => {
+    if (!canRestore)
       return
 
     setShowWorkflowVersionHistoryPanel(false)
-    workflowStore.setState({ isRestoring: false })
-    workflowStore.setState({ backupDraft: undefined })
+    const restoreUrl = `/${getFlowPrefix(configsMap.flowType)}/${configsMap.flowId}/workflows/${currentVersion.id}/restore`
 
-    const { graph } = currentVersion
-    const features = featuresStore?.getState().features
-    const environmentVariables = currentVersion.environment_variables || []
-    const conversationVariables = currentVersion.conversation_variables || []
-
-    requestRestore({
-      versionId: currentVersion.id,
-      versionName: currentVersion.marked_name,
-      initiatorUserId: userProfile.id,
-      initiatorName: userProfile.name,
-      graphData: {
-        nodes: graph.nodes,
-        edges: graph.edges,
-        viewport: graph.viewport,
-      },
-      features,
-      environmentVariables,
-      conversationVariables,
-    }, {
-      onSuccess: () => {
-        Toast.notify({
-          type: 'success',
-          message: t('versionHistory.action.restoreSuccess', { ns: 'workflow' }),
-        })
-      },
-      onError: () => {
-        Toast.notify({
-          type: 'error',
-          message: t('versionHistory.action.restoreFailure', { ns: 'workflow' }),
-        })
-      },
-      onSettled: () => {
-        onRestoreSettled?.()
-      },
-    })
-    deleteAllInspectVars()
-    invalidAllLastRun()
-  }, [currentVersion, featuresStore, setShowWorkflowVersionHistoryPanel, workflowStore, requestRestore, userProfile, deleteAllInspectVars, invalidAllLastRun, t, onRestoreSettled])
+    try {
+      await restoreWorkflow(restoreUrl)
+      workflowStore.setState({ isRestoring: false })
+      workflowStore.setState({ backupDraft: undefined })
+      handleRefreshWorkflowDraft()
+      toast.success(t('versionHistory.action.restoreSuccess', { ns: 'workflow' }))
+      deleteAllInspectVars()
+      invalidAllLastRun()
+    }
+    catch {
+      toast.error(t('versionHistory.action.restoreFailure', { ns: 'workflow' }))
+    }
+    finally {
+      onRestoreSettled?.()
+    }
+  }, [canRestore, currentVersion?.id, configsMap, setShowWorkflowVersionHistoryPanel, workflowStore, restoreWorkflow, handleRefreshWorkflowDraft, deleteAllInspectVars, invalidAllLastRun, t, onRestoreSettled])
 
   return (
     <>
       <div>
         <RestoringTitle />
       </div>
-      <div className="flex items-center justify-end gap-x-2">
+      <div className=" flex items-center justify-end gap-x-2">
         <Button
           onClick={handleRestore}
-          disabled={!currentVersion || currentVersion.version === WorkflowVersion.Draft}
+          disabled={!canRestore}
           variant="primary"
           className={cn(
             'rounded-lg border border-transparent',

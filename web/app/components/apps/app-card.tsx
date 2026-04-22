@@ -5,13 +5,10 @@ import type { HtmlContentProps } from '@/app/components/base/popover'
 import type { Tag } from '@/app/components/base/tag-management/constant'
 import type { CreateAppModalProps } from '@/app/components/explore/create-app-modal'
 import type { EnvironmentVariable } from '@/app/components/workflow/types'
-import type { WorkflowOnlineUser } from '@/models/app'
 import type { App } from '@/types/app'
 import { RiBuildingLine, RiGlobalLine, RiLockLine, RiMoreFill, RiVerifiedBadgeLine } from '@remixicon/react'
-import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
 import * as React from 'react'
-import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useContext } from 'use-context-selector'
 import { AppTypeIcon } from '@/app/components/app/type-selector'
@@ -19,18 +16,30 @@ import AppIcon from '@/app/components/base/app-icon'
 import Divider from '@/app/components/base/divider'
 import CustomPopover from '@/app/components/base/popover'
 import TagSelector from '@/app/components/base/tag-management/selector'
-import Toast, { ToastContext } from '@/app/components/base/toast'
+import Toast from '@/app/components/base/toast'
+import { ToastContext } from '@/app/components/base/toast/context'
 import Tooltip from '@/app/components/base/tooltip'
-import { UserAvatarList } from '@/app/components/base/user-avatar-list'
+import {
+  AlertDialog,
+  AlertDialogActions,
+  AlertDialogCancelButton,
+  AlertDialogConfirmButton,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from '@/app/components/base/ui/alert-dialog'
 import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
 import { useAppContext } from '@/context/app-context'
 import { useGlobalPublicStore } from '@/context/global-public-context'
 import { useProviderContext } from '@/context/provider-context'
 import { useAsyncWindowOpen } from '@/hooks/use-async-window-open'
 import { AccessMode } from '@/models/access-control'
+import dynamic from '@/next/dynamic'
+import { useRouter } from '@/next/navigation'
 import { useGetUserCanAccessApp } from '@/service/access-control'
-import { copyApp, deleteApp, exportAppBundle, exportAppConfig, updateAppInfo } from '@/service/apps'
+import { copyApp, exportAppConfig, updateAppInfo } from '@/service/apps'
 import { fetchInstalledAppList } from '@/service/explore'
+import { useDeleteAppMutation } from '@/service/use-apps'
 import { fetchWorkflowDraft } from '@/service/workflow'
 import { AppModeEnum } from '@/types/app'
 import { getRedirection } from '@/utils/app-redirection'
@@ -48,9 +57,6 @@ const DuplicateAppModal = dynamic(() => import('@/app/components/app/duplicate-m
 const SwitchAppModal = dynamic(() => import('@/app/components/app/switch-app-modal'), {
   ssr: false,
 })
-const Confirm = dynamic(() => import('@/app/components/base/confirm'), {
-  ssr: false,
-})
 const DSLExportConfirmModal = dynamic(() => import('@/app/components/workflow/dsl-export-confirm-modal'), {
   ssr: false,
 })
@@ -61,10 +67,9 @@ const AccessControl = dynamic(() => import('@/app/components/app/app-access-cont
 export type AppCardProps = {
   app: App
   onRefresh?: () => void
-  onlineUsers?: WorkflowOnlineUser[]
 }
 
-const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
+const AppCard = ({ app, onRefresh }: AppCardProps) => {
   const { t } = useTranslation()
   const { notify } = useContext(ToastContext)
   const systemFeatures = useGlobalPublicStore(s => s.systemFeatures)
@@ -77,16 +82,15 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
   const [showDuplicateModal, setShowDuplicateModal] = useState(false)
   const [showSwitchModal, setShowSwitchModal] = useState<boolean>(false)
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
+  const [confirmDeleteInput, setConfirmDeleteInput] = useState('')
   const [showAccessControl, setShowAccessControl] = useState(false)
   const [secretEnvList, setSecretEnvList] = useState<EnvironmentVariable[]>([])
-  const [exporting, startExport] = useTransition()
+  const { mutateAsync: mutateDeleteApp, isPending: isDeleting } = useDeleteAppMutation()
 
   const onConfirmDelete = useCallback(async () => {
     try {
-      await deleteApp(app.id)
+      await mutateDeleteApp(app.id)
       notify({ type: 'success', message: t('appDeleted', { ns: 'app' }) })
-      if (onRefresh)
-        onRefresh()
       onPlanInfoChanged()
     }
     catch (e: any) {
@@ -95,8 +99,20 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
         message: `${t('appDeleteFailed', { ns: 'app' })}${'message' in e ? `: ${e.message}` : ''}`,
       })
     }
-    setShowConfirmDelete(false)
-  }, [app.id, notify, onPlanInfoChanged, onRefresh, t])
+    finally {
+      setShowConfirmDelete(false)
+      setConfirmDeleteInput('')
+    }
+  }, [app.id, mutateDeleteApp, notify, onPlanInfoChanged, t])
+
+  const onDeleteDialogOpenChange = useCallback((open: boolean) => {
+    if (isDeleting)
+      return
+
+    setShowConfirmDelete(open)
+    if (!open)
+      setConfirmDeleteInput('')
+  }, [isDeleting])
 
   const onEdit: CreateAppModalProps['onConfirm'] = useCallback(async ({
     name,
@@ -162,14 +178,6 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
 
   const onExport = async (include = false) => {
     try {
-      const isDownLoadBundle = app.runtime_type === 'sandboxed'
-      if (isDownLoadBundle) {
-        await exportAppBundle({
-          appID: app.id,
-          include,
-        })
-        return
-      }
       const { data } = await exportAppConfig({
         appID: app.id,
         include,
@@ -178,32 +186,26 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
       downloadBlob({ data: file, fileName: `${app.name}.yml` })
     }
     catch {
-      notify({
-        type: 'error',
-        message: t('exportFailed', { ns: 'app' }),
-      })
+      notify({ type: 'error', message: t('exportFailed', { ns: 'app' }) })
     }
   }
 
   const exportCheck = async () => {
     if (app.mode !== AppModeEnum.WORKFLOW && app.mode !== AppModeEnum.ADVANCED_CHAT) {
-      await onExport()
+      onExport()
       return
     }
     try {
       const workflowDraft = await fetchWorkflowDraft(`/apps/${app.id}/workflows/draft`)
       const list = (workflowDraft.environment_variables || []).filter(env => env.value_type === 'secret')
       if (list.length === 0) {
-        await onExport()
+        onExport()
         return
       }
       setSecretEnvList(list)
     }
     catch {
-      notify({
-        type: 'error',
-        message: t('exportFailed', { ns: 'app' }),
-      })
+      notify({ type: 'error', message: t('exportFailed', { ns: 'app' }) })
     }
   }
 
@@ -236,13 +238,11 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
       e.preventDefault()
       setShowDuplicateModal(true)
     }
-    const onClickExport = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const onClickExport = async (e: React.MouseEvent<HTMLButtonElement>) => {
       e.stopPropagation()
       props.onClick?.()
       e.preventDefault()
-      startExport(async () => {
-        await exportCheck()
-      })
+      exportCheck()
     }
     const onClickSwitch = async (e: React.MouseEvent<HTMLButtonElement>) => {
       e.stopPropagation()
@@ -268,7 +268,7 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
       e.preventDefault()
       try {
         await openAsyncWindow(async () => {
-          const { installed_apps }: any = await fetchInstalledAppList(app.id) || {}
+          const { installed_apps } = await fetchInstalledAppList(app.id)
           if (installed_apps?.length > 0)
             return `${basePath}/explore/installed/${installed_apps[0].id}`
           throw new Error('No app found in Explore')
@@ -278,8 +278,9 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
           },
         })
       }
-      catch (e: any) {
-        Toast.notify({ type: 'error', message: `${e.message || e}` })
+      catch (e: unknown) {
+        const message = e instanceof Error ? e.message : `${e}`
+        Toast.notify({ type: 'error', message })
       }
     }
     return (
@@ -291,7 +292,7 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
         <button type="button" className="mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover" onClick={onClickDuplicate}>
           <span className="text-text-secondary system-sm-regular">{t('duplicate', { ns: 'app' })}</span>
         </button>
-        <button type="button" disabled={exporting || secretEnvList.length > 0} className="mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={onClickExport}>
+        <button type="button" className="mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover" onClick={onClickExport}>
           <span className="text-text-secondary system-sm-regular">{t('export', { ns: 'app' })}</span>
         </button>
         {(app.mode === AppModeEnum.COMPLETION || app.mode === AppModeEnum.CHAT) && (
@@ -364,19 +365,6 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
     return `${t('segment.editedAt', { ns: 'datasetDocuments' })} ${timeText}`
   }, [app.updated_at, app.created_at, t])
 
-  const onlineUserAvatars = useMemo(() => {
-    if (!onlineUsers.length)
-      return []
-
-    return onlineUsers
-      .map(user => ({
-        id: user.user_id || user.sid || '',
-        name: user.username || 'User',
-        avatar_url: user.avatar || undefined,
-      }))
-      .filter(user => !!user.id)
-  }, [onlineUsers])
-
   return (
     <>
       <div
@@ -429,11 +417,6 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
               </Tooltip>
             )}
           </div>
-          <div>
-            {onlineUserAvatars.length > 0 && (
-              <UserAvatarList users={onlineUserAvatars} maxVisible={3} size={20} />
-            )}
-          </div>
         </div>
         <div className="title-wrapper h-[90px] px-[14px] text-xs leading-normal text-text-tertiary">
           <div
@@ -475,7 +458,8 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
                     <div
                       className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md"
                     >
-                      <RiMoreFill className="h-4 w-4 text-text-tertiary" />
+                      <span className="sr-only">{t('operation.more', { ns: 'common' })}</span>
+                      <RiMoreFill aria-hidden className="h-4 w-4 text-text-tertiary" />
                     </div>
                   )}
                   btnClassName={open =>
@@ -532,15 +516,42 @@ const AppCard = ({ app, onRefresh, onlineUsers = [] }: AppCardProps) => {
           onSuccess={onSwitch}
         />
       )}
-      {showConfirmDelete && (
-        <Confirm
-          title={t('deleteAppConfirmTitle', { ns: 'app' })}
-          content={t('deleteAppConfirmContent', { ns: 'app' })}
-          isShow={showConfirmDelete}
-          onConfirm={onConfirmDelete}
-          onCancel={() => setShowConfirmDelete(false)}
-        />
-      )}
+      <AlertDialog open={showConfirmDelete} onOpenChange={onDeleteDialogOpenChange}>
+        <AlertDialogContent>
+          <div className="flex flex-col gap-2 px-6 pb-4 pt-6">
+            <AlertDialogTitle className="text-text-primary title-2xl-semi-bold">
+              {t('deleteAppConfirmTitle', { ns: 'app' })}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="w-full whitespace-pre-wrap break-words text-text-tertiary system-md-regular">
+              {t('deleteAppConfirmContent', { ns: 'app' })}
+            </AlertDialogDescription>
+            <div className="mt-2">
+              <label className="mb-1 block text-text-secondary system-sm-regular">
+                {t('deleteAppConfirmInputLabel', { ns: 'app', appName: app.name })}
+              </label>
+              <input
+                type="text"
+                className="border-components-input-border bg-components-input-bg focus:border-components-input-border-focus focus:ring-components-input-border-focus h-9 w-full rounded-lg border px-3 text-sm text-text-primary placeholder:text-text-quaternary focus:outline-none focus:ring-1"
+                placeholder={t('deleteAppConfirmInputPlaceholder', { ns: 'app' })}
+                value={confirmDeleteInput}
+                onChange={e => setConfirmDeleteInput(e.target.value)}
+              />
+            </div>
+          </div>
+          <AlertDialogActions>
+            <AlertDialogCancelButton disabled={isDeleting}>
+              {t('operation.cancel', { ns: 'common' })}
+            </AlertDialogCancelButton>
+            <AlertDialogConfirmButton
+              loading={isDeleting}
+              disabled={isDeleting || confirmDeleteInput !== app.name}
+              onClick={onConfirmDelete}
+            >
+              {t('operation.confirm', { ns: 'common' })}
+            </AlertDialogConfirmButton>
+          </AlertDialogActions>
+        </AlertDialogContent>
+      </AlertDialog>
       {secretEnvList.length > 0 && (
         <DSLExportConfirmModal
           envList={secretEnvList}

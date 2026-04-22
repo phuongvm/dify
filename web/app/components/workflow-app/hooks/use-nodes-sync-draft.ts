@@ -1,14 +1,12 @@
-import type { WorkflowDraftFeaturesPayload } from '@/service/workflow'
+import type { SyncDraftCallback } from '@/app/components/workflow/hooks-store'
 import { produce } from 'immer'
 import { useCallback } from 'react'
 import { useStoreApi } from 'reactflow'
 import { useFeaturesStore } from '@/app/components/base/features/hooks'
-import { collaborationManager } from '@/app/components/workflow/collaboration/core/collaboration-manager'
 import { useSerialAsyncCallback } from '@/app/components/workflow/hooks/use-serial-async-callback'
 import { useNodesReadOnly } from '@/app/components/workflow/hooks/use-workflow'
 import { useWorkflowStore } from '@/app/components/workflow/store'
 import { API_PREFIX } from '@/config'
-import { useGlobalPublicStore } from '@/context/global-public-context'
 import { postWithKeepalive } from '@/service/fetch'
 import { syncWorkflowDraft } from '@/service/workflow'
 import { useWorkflowRefreshDraft } from '.'
@@ -19,7 +17,6 @@ export const useNodesSyncDraft = () => {
   const featuresStore = useFeaturesStore()
   const { getNodesReadOnly } = useNodesReadOnly()
   const { handleRefreshWorkflowDraft } = useWorkflowRefreshDraft()
-  const isCollaborationEnabled = useGlobalPublicStore(s => s.systemFeatures.enable_collaboration_mode)
 
   const getPostParams = useCallback(() => {
     const {
@@ -57,17 +54,7 @@ export const useNodesSyncDraft = () => {
         })
       })
     })
-    const featuresPayload: WorkflowDraftFeaturesPayload = {
-      opening_statement: features.opening?.enabled ? (features.opening?.opening_statement || '') : '',
-      suggested_questions: features.opening?.enabled ? (features.opening?.suggested_questions || []) : [],
-      suggested_questions_after_answer: features.suggested,
-      text_to_speech: features.text2speech,
-      speech_to_text: features.speech2text,
-      retriever_resource: features.citation,
-      sensitive_word_avoidance: features.moderation,
-      file_upload: features.file,
-      sandbox: features.sandbox,
-    }
+    const viewport = { x, y, zoom }
 
     return {
       url: `/apps/${appId}/workflows/draft`,
@@ -75,59 +62,42 @@ export const useNodesSyncDraft = () => {
         graph: {
           nodes: producedNodes,
           edges: producedEdges,
-          viewport: {
-            x,
-            y,
-            zoom,
-          },
+          viewport,
         },
-        features: featuresPayload,
+        features: {
+          opening_statement: features.opening?.enabled ? (features.opening?.opening_statement || '') : '',
+          suggested_questions: features.opening?.enabled ? (features.opening?.suggested_questions || []) : [],
+          suggested_questions_after_answer: features.suggested,
+          text_to_speech: features.text2speech,
+          speech_to_text: features.speech2text,
+          retriever_resource: features.citation,
+          sensitive_word_avoidance: features.moderation,
+          file_upload: features.file,
+        },
         environment_variables: environmentVariables,
         conversation_variables: conversationVariables,
         hash: syncWorkflowDraftHash,
-        _is_collaborative: isCollaborationEnabled,
       },
     }
-  }, [store, featuresStore, workflowStore, isCollaborationEnabled])
+  }, [store, featuresStore, workflowStore])
 
   const syncWorkflowDraftWhenPageClose = useCallback(() => {
     if (getNodesReadOnly())
       return
-
-    // Check leader status at sync time
-    const currentIsLeader = isCollaborationEnabled ? collaborationManager.getIsLeader() : true
-
-    // Only allow leader to sync data
-    if (isCollaborationEnabled && !currentIsLeader)
-      return
-
     const postParams = getPostParams()
 
     if (postParams)
       postWithKeepalive(`${API_PREFIX}${postParams.url}`, postParams.params)
-  }, [getPostParams, getNodesReadOnly, isCollaborationEnabled])
+  }, [getPostParams, getNodesReadOnly])
 
   const performSync = useCallback(async (
     notRefreshWhenSyncError?: boolean,
-    callback?: {
-      onSuccess?: () => void
-      onError?: () => void
-      onSettled?: () => void
-    },
+    callback?: SyncDraftCallback,
   ) => {
     if (getNodesReadOnly())
       return
 
-    // Check leader status at sync time
-    const currentIsLeader = isCollaborationEnabled ? collaborationManager.getIsLeader() : true
-
-    // If not leader, request the leader to sync
-    if (isCollaborationEnabled && !currentIsLeader) {
-      collaborationManager.emitSyncRequest()
-      callback?.onSettled?.()
-      return
-    }
-
+    // Get base params without hash
     const baseParams = getPostParams()
     if (!baseParams)
       return
@@ -150,10 +120,7 @@ export const useNodesSyncDraft = () => {
         },
       }
 
-      const res = await syncWorkflowDraft({
-        ...postParams,
-        canNotSaveEmpty: true,
-      })
+      const res = await syncWorkflowDraft(postParams)
       setSyncWorkflowDraftHash(res.hash)
       setDraftUpdatedAt(res.updated_at)
       callback?.onSuccess?.()
@@ -162,7 +129,7 @@ export const useNodesSyncDraft = () => {
       if (error && error.json && !error.bodyUsed) {
         error.json().then((err: any) => {
           if (err.code === 'draft_workflow_not_sync' && !notRefreshWhenSyncError)
-            handleRefreshWorkflowDraft()
+            handleRefreshWorkflowDraft(true)
         })
       }
       callback?.onError?.()
@@ -170,23 +137,12 @@ export const useNodesSyncDraft = () => {
     finally {
       callback?.onSettled?.()
     }
-  }, [workflowStore, getPostParams, getNodesReadOnly, handleRefreshWorkflowDraft, isCollaborationEnabled])
+  }, [workflowStore, getPostParams, getNodesReadOnly, handleRefreshWorkflowDraft])
 
   const doSyncWorkflowDraft = useSerialAsyncCallback(performSync, getNodesReadOnly)
-  const syncWorkflowDraftImmediately = useCallback((
-    notRefreshWhenSyncError?: boolean,
-    callback?: {
-      onSuccess?: () => void
-      onError?: () => void
-      onSettled?: () => void
-    },
-  ) => {
-    return performSync(notRefreshWhenSyncError, callback)
-  }, [performSync])
 
   return {
     doSyncWorkflowDraft,
     syncWorkflowDraftWhenPageClose,
-    syncWorkflowDraftImmediately,
   }
 }

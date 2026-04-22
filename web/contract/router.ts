@@ -1,31 +1,20 @@
 import type { InferContractRouterInputs } from '@orpc/contract'
-import { accountAvatarContract } from './console/account'
-import {
-  batchUploadContract,
-  createFolderContract,
-  deleteNodeContract,
-  getFileContentContract,
-  getFileDownloadUrlContract,
-  getFileUploadUrlContract,
-  moveNodeContract,
-  publishContract,
-  renameNodeContract,
-  reorderNodeContract,
-  treeContract,
-  updateFileContentContract,
-} from './console/app-asset'
-import { workflowOnlineUsersContract } from './console/apps'
+import { appDeleteContract } from './console/apps'
 import { bindPartnerStackContract, invoicesContract } from './console/billing'
 import {
-  downloadFileContract,
-  listFilesContract,
-} from './console/sandbox-file'
-import {
-  activateSandboxProviderContract,
-  deleteSandboxProviderConfigContract,
-  getSandboxProviderListContract,
-  saveSandboxProviderConfigContract,
-} from './console/sandbox-provider'
+  exploreAppDetailContract,
+  exploreAppsContract,
+  exploreBannersContract,
+  exploreInstalledAppAccessModeContract,
+  exploreInstalledAppMetaContract,
+  exploreInstalledAppParametersContract,
+  exploreInstalledAppPinContract,
+  exploreInstalledAppsContract,
+  exploreInstalledAppUninstallContract,
+} from './console/explore'
+import { changePreferredProviderTypeContract, modelProvidersModelsContract } from './console/model-providers'
+import { notificationContract, notificationDismissContract } from './console/notification'
+import { pluginCheckInstalledContract, pluginLatestVersionsContract } from './console/plugins'
 import { systemFeaturesContract } from './console/system'
 import {
   triggerOAuthConfigContract,
@@ -45,14 +34,6 @@ import {
   triggerSubscriptionVerifyContract,
 } from './console/trigger'
 import { trialAppDatasetsContract, trialAppInfoContract, trialAppParametersContract, trialAppWorkflowsContract } from './console/try-app'
-import {
-  workflowDraftEnvironmentVariablesContract,
-  workflowDraftNodeSkillsContract,
-  workflowDraftUpdateConversationVariablesContract,
-  workflowDraftUpdateEnvironmentVariablesContract,
-  workflowDraftUpdateFeaturesContract,
-} from './console/workflow'
-import { workflowCommentContracts } from './console/workflow-comment'
 import { collectionPluginsContract, collectionsContract, searchAdvancedContract } from './marketplace'
 
 export const marketplaceRouterContract = {
@@ -64,55 +45,41 @@ export const marketplaceRouterContract = {
 export type MarketPlaceInputs = InferContractRouterInputs<typeof marketplaceRouterContract>
 
 export const consoleRouterContract = {
-  account: {
-    avatar: accountAvatarContract,
-  },
   systemFeatures: systemFeaturesContract,
+  apps: {
+    deleteApp: appDeleteContract,
+  },
+  explore: {
+    apps: exploreAppsContract,
+    appDetail: exploreAppDetailContract,
+    installedApps: exploreInstalledAppsContract,
+    uninstallInstalledApp: exploreInstalledAppUninstallContract,
+    updateInstalledApp: exploreInstalledAppPinContract,
+    appAccessMode: exploreInstalledAppAccessModeContract,
+    installedAppParameters: exploreInstalledAppParametersContract,
+    installedAppMeta: exploreInstalledAppMetaContract,
+    banners: exploreBannersContract,
+  },
   trialApps: {
     info: trialAppInfoContract,
     datasets: trialAppDatasetsContract,
     parameters: trialAppParametersContract,
     workflows: trialAppWorkflowsContract,
   },
+  modelProviders: {
+    models: modelProvidersModelsContract,
+    changePreferredProviderType: changePreferredProviderTypeContract,
+  },
+  plugins: {
+    checkInstalled: pluginCheckInstalledContract,
+    latestVersions: pluginLatestVersionsContract,
+  },
   billing: {
     invoices: invoicesContract,
     bindPartnerStack: bindPartnerStackContract,
   },
-  sandboxProvider: {
-    getSandboxProviderList: getSandboxProviderListContract,
-    saveSandboxProviderConfig: saveSandboxProviderConfigContract,
-    deleteSandboxProviderConfig: deleteSandboxProviderConfigContract,
-    activateSandboxProvider: activateSandboxProviderContract,
-  },
-  sandboxFile: {
-    listFiles: listFilesContract,
-    downloadFile: downloadFileContract,
-  },
-  appAsset: {
-    tree: treeContract,
-    createFolder: createFolderContract,
-    getFileContent: getFileContentContract,
-    getFileDownloadUrl: getFileDownloadUrlContract,
-    updateFileContent: updateFileContentContract,
-    deleteNode: deleteNodeContract,
-    renameNode: renameNodeContract,
-    moveNode: moveNodeContract,
-    reorderNode: reorderNodeContract,
-    publish: publishContract,
-    getFileUploadUrl: getFileUploadUrlContract,
-    batchUpload: batchUploadContract,
-  },
-  apps: {
-    workflowOnlineUsers: workflowOnlineUsersContract,
-  },
-  workflowDraft: {
-    environmentVariables: workflowDraftEnvironmentVariablesContract,
-    nodeSkills: workflowDraftNodeSkillsContract,
-    updateEnvironmentVariables: workflowDraftUpdateEnvironmentVariablesContract,
-    updateConversationVariables: workflowDraftUpdateConversationVariablesContract,
-    updateFeatures: workflowDraftUpdateFeaturesContract,
-  },
-  workflowComments: workflowCommentContracts,
+  notification: notificationContract,
+  notificationDismiss: notificationDismissContract,
   triggers: {
     list: triggersContract,
     providerInfo: triggerProviderInfoContract,

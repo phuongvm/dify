@@ -9,11 +9,11 @@
  */
 import type { AppListResponse } from '@/models/app'
 import type { App } from '@/types/app'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { NuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import List from '@/app/components/apps/list'
 import { AccessMode } from '@/models/access-control'
+import { renderWithNuqs } from '@/test/nuqs-testing'
 import { AppModeEnum } from '@/types/app'
 
 let mockIsCurrentWorkspaceEditor = true
@@ -35,7 +35,7 @@ const mockRouterPush = vi.fn()
 const mockRouterReplace = vi.fn()
 const mockOnPlanInfoChanged = vi.fn()
 
-vi.mock('next/navigation', () => ({
+vi.mock('@/next/navigation', () => ({
   useRouter: () => ({
     push: mockRouterPush,
     replace: mockRouterReplace,
@@ -91,6 +91,10 @@ vi.mock('@/service/use-apps', () => ({
     error: null,
     refetch: mockRefetch,
   }),
+  useDeleteAppMutation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }))
 
 vi.mock('@/hooks/use-pay', () => ({
@@ -113,7 +117,7 @@ vi.mock('ahooks', async () => {
 })
 
 // Mock dynamically loaded modals with test stubs
-vi.mock('next/dynamic', () => ({
+vi.mock('@/next/dynamic', () => ({
   default: (loader: () => Promise<{ default: React.ComponentType }>) => {
     let Component: React.ComponentType<Record<string, unknown>> | null = null
     loader().then((mod) => {
@@ -215,11 +219,7 @@ const createPage = (apps: App[]): AppListResponse => ({
 })
 
 const renderList = () => {
-  return render(
-    <NuqsTestingAdapter>
-      <List controlRefreshList={0} />
-    </NuqsTestingAdapter>,
-  )
+  return renderWithNuqs(<List controlRefreshList={0} />)
 }
 
 describe('Create App Flow', () => {
@@ -238,7 +238,6 @@ describe('Create App Flow', () => {
     mockShowTagManagementModal = false
   })
 
-  // -- NewAppCard rendering --
   describe('NewAppCard Rendering', () => {
     it('should render the "Create App" card with all options', () => {
       renderList()

@@ -1,15 +1,14 @@
-import type { WorkflowOnlineUsersResponse } from '@/models/app'
 import { type } from '@orpc/contract'
 import { base } from '../base'
 
-export const workflowOnlineUsersContract = base
+export const appDeleteContract = base
   .route({
-    path: '/apps/workflows/online-users',
-    method: 'GET',
+    path: '/apps/{appId}',
+    method: 'DELETE',
   })
   .input(type<{
-    query: {
-      workflow_ids: string
+    params: {
+      appId: string
     }
   }>())
-  .output(type<WorkflowOnlineUsersResponse>())
+  .output(type<unknown>())

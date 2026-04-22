@@ -4,12 +4,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.model_runtime.entities.llm_entities import LLMResult, LLMUsage
+from core.app.entities.agent_strategy import AgentStrategyInfo
 from core.rag.entities.citation_metadata import RetrievalSourceMetadata
-from core.workflow.entities import AgentNodeStrategyInit
-from core.workflow.entities.workflow_start_reason import WorkflowStartReason
-from core.workflow.enums import WorkflowExecutionStatus, WorkflowNodeExecutionMetadataKey, WorkflowNodeExecutionStatus
-from core.workflow.nodes.human_input.entities import FormInput, UserAction
+from dify_graph.entities.workflow_start_reason import WorkflowStartReason
+from dify_graph.enums import WorkflowExecutionStatus, WorkflowNodeExecutionMetadataKey, WorkflowNodeExecutionStatus
+from dify_graph.model_runtime.entities.llm_entities import LLMResult, LLMUsage
+from dify_graph.nodes.human_input.entities import FormInput, UserAction
 
 
 class AnnotationReplyAccount(BaseModel):
@@ -118,38 +118,6 @@ class MessageStreamResponse(StreamResponse):
     id: str
     answer: str
     from_variable_selector: list[str] | None = None
-
-    # Extended fields for Agent/Tool streaming (imported at runtime to avoid circular import)
-    chunk_type: str | None = None
-    """type of the chunk: text, tool_call, tool_result, thought"""
-
-    # Tool call fields (when chunk_type == "tool_call")
-    tool_call_id: str | None = None
-    """unique identifier for this tool call"""
-    tool_name: str | None = None
-    """name of the tool being called"""
-    tool_arguments: str | None = None
-    """accumulated tool arguments JSON"""
-
-    # Tool result fields (when chunk_type == "tool_result")
-    tool_files: list[str] | None = None
-    """file IDs produced by tool"""
-    tool_error: str | None = None
-    """error message if tool failed"""
-    tool_elapsed_time: float | None = None
-    """elapsed time spent executing the tool"""
-    tool_icon: str | dict | None = None
-    """icon of the tool"""
-    tool_icon_dark: str | dict | None = None
-    """dark theme icon of the tool"""
-
-    def model_dump(self, *args, **kwargs) -> dict[str, object]:
-        kwargs.setdefault("exclude_none", True)
-        return super().model_dump(*args, **kwargs)
-
-    def model_dump_json(self, *args, **kwargs) -> str:
-        kwargs.setdefault("exclude_none", True)
-        return super().model_dump_json(*args, **kwargs)
 
 
 class MessageAudioStreamResponse(StreamResponse):
@@ -381,8 +349,7 @@ class NodeStartStreamResponse(StreamResponse):
         extras: dict[str, object] = Field(default_factory=dict)
         iteration_id: str | None = None
         loop_id: str | None = None
-        parent_node_id: str | None = None
-        agent_strategy: AgentNodeStrategyInit | None = None
+        agent_strategy: AgentStrategyInfo | None = None
 
     event: StreamEvent = StreamEvent.NODE_STARTED
     workflow_run_id: str
@@ -405,7 +372,6 @@ class NodeStartStreamResponse(StreamResponse):
                 "extras": {},
                 "iteration_id": self.data.iteration_id,
                 "loop_id": self.data.loop_id,
-                "parent_node_id": self.data.parent_node_id,
             },
         }
 
@@ -441,7 +407,6 @@ class NodeFinishStreamResponse(StreamResponse):
         files: Sequence[Mapping[str, Any]] | None = []
         iteration_id: str | None = None
         loop_id: str | None = None
-        parent_node_id: str | None = None
 
     event: StreamEvent = StreamEvent.NODE_FINISHED
     workflow_run_id: str
@@ -471,7 +436,6 @@ class NodeFinishStreamResponse(StreamResponse):
                 "files": [],
                 "iteration_id": self.data.iteration_id,
                 "loop_id": self.data.loop_id,
-                "parent_node_id": self.data.parent_node_id,
             },
         }
 
@@ -507,7 +471,6 @@ class NodeRetryStreamResponse(StreamResponse):
         files: Sequence[Mapping[str, Any]] | None = []
         iteration_id: str | None = None
         loop_id: str | None = None
-        parent_node_id: str | None = None
         retry_index: int = 0
 
     event: StreamEvent = StreamEvent.NODE_RETRY
@@ -538,7 +501,6 @@ class NodeRetryStreamResponse(StreamResponse):
                 "files": [],
                 "iteration_id": self.data.iteration_id,
                 "loop_id": self.data.loop_id,
-                "parent_node_id": self.data.parent_node_id,
                 "retry_index": self.data.retry_index,
             },
         }
@@ -707,17 +669,6 @@ class LoopNodeCompletedStreamResponse(StreamResponse):
     data: Data
 
 
-class ChunkType(StrEnum):
-    """Stream chunk type for LLM-related events."""
-
-    TEXT = "text"  # Normal text streaming
-    TOOL_CALL = "tool_call"  # Tool call arguments streaming
-    TOOL_RESULT = "tool_result"  # Tool execution result
-    THOUGHT = "thought"  # Agent thinking process (ReAct)
-    THOUGHT_START = "thought_start"  # Agent thought start
-    THOUGHT_END = "thought_end"  # Agent thought end
-
-
 class TextChunkStreamResponse(StreamResponse):
     """
     TextChunkStreamResponse entity
@@ -730,36 +681,6 @@ class TextChunkStreamResponse(StreamResponse):
 
         text: str
         from_variable_selector: list[str] | None = None
-
-        # Extended fields for Agent/Tool streaming
-        chunk_type: ChunkType = ChunkType.TEXT
-        """type of the chunk"""
-
-        # Tool call fields (when chunk_type == TOOL_CALL)
-        tool_call_id: str | None = None
-        """unique identifier for this tool call"""
-        tool_name: str | None = None
-        """name of the tool being called"""
-        tool_arguments: str | None = None
-        """accumulated tool arguments JSON"""
-
-        # Tool result fields (when chunk_type == TOOL_RESULT)
-        tool_files: list[str] | None = None
-        """file IDs produced by tool"""
-        tool_error: str | None = None
-        """error message if tool failed"""
-
-        # Tool elapsed time fields (when chunk_type == TOOL_RESULT)
-        tool_elapsed_time: float | None = None
-        """elapsed time spent executing the tool"""
-
-        def model_dump(self, *args, **kwargs) -> dict[str, object]:
-            kwargs.setdefault("exclude_none", True)
-            return super().model_dump(*args, **kwargs)
-
-        def model_dump_json(self, *args, **kwargs) -> str:
-            kwargs.setdefault("exclude_none", True)
-            return super().model_dump_json(*args, **kwargs)
 
     event: StreamEvent = StreamEvent.TEXT_CHUNK
     data: Data
@@ -909,7 +830,7 @@ class AgentLogStreamResponse(StreamResponse):
         """
 
         node_execution_id: str
-        message_id: str
+        id: str
         label: str
         parent_id: str | None = None
         error: str | None = None

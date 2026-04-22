@@ -1,7 +1,6 @@
 import { useClickAway } from 'ahooks'
 import {
   memo,
-  useEffect,
   useRef,
 } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -29,16 +28,11 @@ const PanelContextmenu = () => {
   const setCommentPlacing = useStore(s => s.setCommentPlacing)
   const setCommentQuickAdd = useStore(s => s.setCommentQuickAdd)
   const { handleNodesPaste } = useNodesInteractions()
-  const { handlePaneContextmenuCancel, handleNodeContextmenuCancel } = usePanelInteractions()
+  const { handlePaneContextmenuCancel } = usePanelInteractions()
   const { handleStartWorkflowRun } = useWorkflowStartRun()
   const { handleAddNote } = useOperator()
   const { isCommentModeAvailable } = useWorkflowMoveMode()
   const { exportCheck } = useDSL()
-
-  useEffect(() => {
-    if (panelMenu)
-      handleNodeContextmenuCancel()
-  }, [panelMenu, handleNodeContextmenuCancel])
 
   useClickAway(() => {
     handlePaneContextmenuCancel()

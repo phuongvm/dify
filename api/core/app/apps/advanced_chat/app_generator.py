@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session, sessionmaker
 import contexts
 from configs import dify_config
 from constants import UUID_NIL
-from core.app.layers.sandbox_layer import SandboxLayer
 
 if TYPE_CHECKING:
     from controllers.console.app.workflow import LoopNodeRunPayload
@@ -32,29 +31,25 @@ from core.app.entities.app_invoke_entities import AdvancedChatAppGenerateEntity,
 from core.app.entities.task_entities import ChatbotAppBlockingResponse, ChatbotAppStreamResponse
 from core.app.layers.pause_state_persist_layer import PauseStateLayerConfig, PauseStatePersistenceLayer
 from core.helper.trace_id_helper import extract_external_trace_id_from_args
-from core.model_runtime.errors.invoke import InvokeAuthorizationError
 from core.ops.ops_trace_manager import TraceQueueManager
 from core.prompt.utils.get_thread_messages_length import get_thread_messages_length
 from core.repositories import DifyCoreRepositoryFactory
-from core.sandbox import Sandbox
-from core.workflow.graph_engine.layers.base import GraphEngineLayer
-from core.workflow.repositories.draft_variable_repository import (
+from dify_graph.graph_engine.layers.base import GraphEngineLayer
+from dify_graph.model_runtime.errors.invoke import InvokeAuthorizationError
+from dify_graph.repositories.draft_variable_repository import (
     DraftVariableSaverFactory,
 )
-from core.workflow.repositories.workflow_execution_repository import WorkflowExecutionRepository
-from core.workflow.repositories.workflow_node_execution_repository import WorkflowNodeExecutionRepository
-from core.workflow.runtime import GraphRuntimeState
-from core.workflow.variable_loader import DUMMY_VARIABLE_LOADER, VariableLoader
+from dify_graph.repositories.workflow_execution_repository import WorkflowExecutionRepository
+from dify_graph.repositories.workflow_node_execution_repository import WorkflowNodeExecutionRepository
+from dify_graph.runtime import GraphRuntimeState
+from dify_graph.variable_loader import DUMMY_VARIABLE_LOADER, VariableLoader
 from extensions.ext_database import db
 from factories import file_factory
 from libs.flask_utils import preserve_flask_contexts
 from models import Account, App, Conversation, EndUser, Message, Workflow, WorkflowNodeExecutionTriggeredFrom
 from models.base import Base
 from models.enums import WorkflowRunTriggeredFrom
-from models.workflow_features import WorkflowFeatures
 from services.conversation_service import ConversationService
-from services.sandbox.sandbox_provider_service import SandboxProviderService
-from services.sandbox.sandbox_service import SandboxService
 from services.workflow_draft_variable_service import (
     DraftVarLoader,
     WorkflowDraftVariableService,
@@ -335,9 +330,10 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
             engine=db.engine,
             app_id=application_generate_entity.app_config.app_id,
             tenant_id=application_generate_entity.app_config.tenant_id,
+            user_id=user.id,
         )
         draft_var_srv = WorkflowDraftVariableService(db.session())
-        draft_var_srv.prefill_conversation_variable_default_values(workflow)
+        draft_var_srv.prefill_conversation_variable_default_values(workflow, user_id=user.id)
 
         return self._generate(
             workflow=workflow,
@@ -418,9 +414,10 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
             engine=db.engine,
             app_id=application_generate_entity.app_config.app_id,
             tenant_id=application_generate_entity.app_config.tenant_id,
+            user_id=user.id,
         )
         draft_var_srv = WorkflowDraftVariableService(db.session())
-        draft_var_srv.prefill_conversation_variable_default_values(workflow)
+        draft_var_srv.prefill_conversation_variable_default_values(workflow, user_id=user.id)
 
         return self._generate(
             workflow=workflow,
@@ -500,30 +497,6 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
                     state_owner_user_id=pause_state_config.state_owner_user_id,
                 )
             )
-        sandbox: Sandbox | None = None
-        if workflow.get_feature(WorkflowFeatures.SANDBOX).enabled:
-            sandbox_provider = SandboxProviderService.get_sandbox_provider(
-                application_generate_entity.app_config.tenant_id
-            )
-            try:
-                if workflow.version == Workflow.VERSION_DRAFT:
-                    sandbox = SandboxService.create_draft(
-                        tenant_id=application_generate_entity.app_config.tenant_id,
-                        app_id=application_generate_entity.app_config.app_id,
-                        user_id=user.id,
-                        sandbox_provider=sandbox_provider,
-                    )
-                else:
-                    sandbox = SandboxService.create(
-                        tenant_id=application_generate_entity.app_config.tenant_id,
-                        app_id=application_generate_entity.app_config.app_id,
-                        user_id=user.id,
-                        sandbox_id=conversation.id,
-                        sandbox_provider=sandbox_provider,
-                    )
-                graph_layers.append(SandboxLayer(sandbox))
-            except ValueError as e:
-                queue_manager.publish_error(e, PublishFrom.APPLICATION_MANAGER)
 
         # new thread with request context and contextvars
         context = contextvars.copy_context()
@@ -542,7 +515,6 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
                 "workflow_node_execution_repository": workflow_node_execution_repository,
                 "graph_engine_layers": tuple(graph_layers),
                 "graph_runtime_state": graph_runtime_state,
-                "sandbox": sandbox,
             },
         )
 
@@ -590,7 +562,6 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
         workflow_node_execution_repository: WorkflowNodeExecutionRepository,
         graph_engine_layers: Sequence[GraphEngineLayer] = (),
         graph_runtime_state: GraphRuntimeState | None = None,
-        sandbox: Sandbox | None = None,
     ):
         """
         Generate worker in a new thread.
@@ -649,7 +620,6 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
                 workflow_execution_repository=workflow_execution_repository,
                 workflow_node_execution_repository=workflow_node_execution_repository,
                 graph_engine_layers=graph_engine_layers,
-                sandbox=sandbox,
                 graph_runtime_state=graph_runtime_state,
             )
 

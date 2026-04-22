@@ -3,13 +3,13 @@ import type { FC } from 'react'
 import type { StructuredOutput } from '../../../llm/types'
 import type { Field } from '@/app/components/workflow/nodes/llm/types'
 import type { NodeOutPutVar, ValueSelector, Var } from '@/app/components/workflow/types'
-import { useHover, useLatest } from 'ahooks'
+import { useHover } from 'ahooks'
 import { noop } from 'es-toolkit/function'
 import * as React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight } from '@/app/components/base/icons/src/vender/line/arrows'
-import { AssembleVariables, CodeAssistant, MagicEdit } from '@/app/components/base/icons/src/vender/line/general'
+import { CodeAssistant, MagicEdit } from '@/app/components/base/icons/src/vender/line/general'
 import { Variable02 } from '@/app/components/base/icons/src/vender/solid/development'
 import Input from '@/app/components/base/input'
 import {
@@ -17,86 +17,19 @@ import {
   PortalToFollowElemContent,
   PortalToFollowElemTrigger,
 } from '@/app/components/base/portal-to-follow-elem'
-import { VAR_SHOW_NAME_MAP } from '@/app/components/workflow/constants'
 import PickerStructurePanel from '@/app/components/workflow/nodes/_base/components/variable/object-child-tree-panel/picker'
 import { VariableIconWithColor } from '@/app/components/workflow/nodes/_base/components/variable/variable-label'
 import { VarType } from '@/app/components/workflow/types'
 import { cn } from '@/utils/classnames'
-import { checkKeys } from '@/utils/var'
 import { Type } from '../../../llm/types'
 import ManageInputField from './manage-input-field'
-import { isSpecialVar, varTypeToStructType } from './utils'
-
-const isStructuredOutputChildren = (children?: Var['children']): children is StructuredOutput => {
-  return !!(children as StructuredOutput | undefined)?.schema?.properties
-}
-
-const matchesPath = (segments: string[], query: string) => {
-  return segments.join('.').toLowerCase().includes(query)
-}
-
-const matchesStructuredProperties = (
-  properties: Record<string, Field>,
-  query: string,
-  prefix: string[],
-): boolean => {
-  return Object.keys(properties).some((key) => {
-    const field = properties[key]
-    const nextPath = [...prefix, key]
-    if (matchesPath(nextPath, query))
-      return true
-
-    if (field.type === Type.object && field.properties)
-      return matchesStructuredProperties(field.properties, query, nextPath)
-
-    if (field.type === Type.array && field.items?.type === Type.object && field.items?.properties)
-      return matchesStructuredProperties(field.items.properties, query, nextPath)
-
-    return false
-  })
-}
-
-const matchesStructuredOutput = (
-  structuredOutput: StructuredOutput,
-  query: string,
-  prefix: string[],
-): boolean => {
-  return matchesStructuredProperties(structuredOutput.schema.properties, query, prefix)
-}
-
-const matchesVarChildren = (children: Var[], query: string, prefix: string[]): boolean => {
-  return children.some((child) => {
-    const nextPath = [...prefix, child.variable]
-    if (matchesPath(nextPath, query))
-      return true
-
-    const childChildren = child.children
-    if (!childChildren)
-      return false
-
-    if (Array.isArray(childChildren))
-      return matchesVarChildren(childChildren, query, nextPath)
-
-    if (isStructuredOutputChildren(childChildren))
-      return matchesStructuredOutput(childChildren, query, nextPath)
-
-    return false
-  })
-}
-
-const matchesNestedVar = (itemData: Var, query: string): boolean => {
-  const children = itemData.children
-  if (!children)
-    return false
-
-  if (Array.isArray(children))
-    return matchesVarChildren(children, query, [itemData.variable])
-
-  if (isStructuredOutputChildren(children))
-    return matchesStructuredOutput(children, query, [itemData.variable])
-
-  return false
-}
+import { varTypeToStructType } from './utils'
+import {
+  filterReferenceVars,
+  getValueSelector,
+  getVariableCategory,
+  getVariableDisplayName,
+} from './var-reference-vars.helpers'
 
 type ItemProps = {
   nodeId: string
@@ -114,31 +47,6 @@ type ItemProps = {
   zIndex?: number
   className?: string
   preferSchemaType?: boolean
-  isHighlighted?: boolean
-  onSetHighlight?: () => void
-  registerRef?: (element: HTMLDivElement | null) => void
-}
-
-const buildValueSelector = ({
-  nodeId,
-  objPath,
-  itemData,
-  isFlat,
-}: {
-  nodeId: string
-  objPath: string[]
-  itemData: Var
-  isFlat?: boolean
-}): ValueSelector => {
-  if (isFlat)
-    return [itemData.variable]
-  const isSys = itemData.variable.startsWith('sys.')
-  const isEnv = itemData.variable.startsWith('env.')
-  const isChatVar = itemData.variable.startsWith('conversation.')
-  const isRagVariable = itemData.isRagVariable
-  if (isSys || isEnv || isChatVar || isRagVariable)
-    return [...objPath, ...itemData.variable.split('.')]
-  return [nodeId, ...objPath, itemData.variable]
 }
 
 const Item: FC<ItemProps> = ({
@@ -156,9 +64,6 @@ const Item: FC<ItemProps> = ({
   zIndex,
   className,
   preferSchemaType,
-  isHighlighted,
-  onSetHighlight,
-  registerRef,
 }) => {
   const isStructureOutput = itemData.type === VarType.object && (itemData.children as StructuredOutput)?.schema?.properties
   const isFile = itemData.type === VarType.file && !isStructureOutput
@@ -183,17 +88,10 @@ const Item: FC<ItemProps> = ({
     }
   }, [isFlat, isInCodeGeneratorInstructionEditor, itemData.variable])
 
-  const varName = useMemo(() => {
-    if (VAR_SHOW_NAME_MAP[itemData.variable])
-      return VAR_SHOW_NAME_MAP[itemData.variable]
-
-    if (!isFlat)
-      return itemData.variable
-    if (itemData.variable === 'current')
-      return isInCodeGeneratorInstructionEditor ? 'current_code' : 'current_prompt'
-
-    return itemData.variable
-  }, [isFlat, isInCodeGeneratorInstructionEditor, itemData.variable])
+  const varName = useMemo(
+    () => getVariableDisplayName(itemData.variable, !!isFlat, isInCodeGeneratorInstructionEditor),
+    [isFlat, isInCodeGeneratorInstructionEditor, itemData.variable],
+  )
 
   const objStructuredOutput: StructuredOutput | null = useMemo(() => {
     if (!isObj)
@@ -222,10 +120,6 @@ const Item: FC<ItemProps> = ({
   })()
 
   const itemRef = useRef<HTMLDivElement>(null)
-  const setItemRef = useCallback((element: HTMLDivElement | null) => {
-    itemRef.current = element
-    registerRef?.(element)
-  }, [registerRef])
   const [isItemHovering, setIsItemHovering] = useState(false)
   useHover(itemRef, {
     onChange: (hovering) => {
@@ -253,27 +147,26 @@ const Item: FC<ItemProps> = ({
   const handleChosen = (e: React.MouseEvent) => {
     e.stopPropagation()
     e.nativeEvent.stopImmediatePropagation()
-    if (!isSupportFileVar && isFile)
-      return
-
-    onChange(buildValueSelector({
-      nodeId,
-      objPath,
+    const valueSelector = getValueSelector({
       itemData,
       isFlat,
-    }), itemData)
+      isSupportFileVar,
+      isFile,
+      isSys,
+      isEnv,
+      isChatVar,
+      isRagVariable,
+      nodeId,
+      objPath,
+    })
+
+    if (valueSelector)
+      onChange(valueSelector, itemData)
   }
-  const variableCategory = useMemo(() => {
-    if (isEnv)
-      return 'environment'
-    if (isChatVar)
-      return 'conversation'
-    if (isLoopVar)
-      return 'loop'
-    if (isRagVariable)
-      return 'rag'
-    return 'system'
-  }, [isEnv, isChatVar, isSys, isLoopVar, isRagVariable])
+  const variableCategory = useMemo(
+    () => getVariableCategory({ isEnv, isChatVar, isLoopVar, isRagVariable }),
+    [isEnv, isChatVar, isLoopVar, isRagVariable],
+  )
   return (
     <PortalToFollowElem
       open={open}
@@ -282,15 +175,14 @@ const Item: FC<ItemProps> = ({
     >
       <PortalToFollowElemTrigger className="w-full">
         <div
-          ref={setItemRef}
+          ref={itemRef}
           className={cn(
-            (isObj || isStructureOutput) ? 'pr-1' : 'pr-[18px]',
-            (isHovering || isHighlighted) && ((isObj || isStructureOutput) ? 'bg-components-panel-on-panel-item-bg-hover' : 'bg-state-base-hover'),
+            (isObj || isStructureOutput) ? ' pr-1' : 'pr-[18px]',
+            isHovering && ((isObj || isStructureOutput) ? 'bg-components-panel-on-panel-item-bg-hover' : 'bg-state-base-hover'),
             'relative flex h-6 w-full cursor-pointer items-center rounded-md pl-3',
             className,
           )}
           onClick={handleChosen}
-          onMouseEnter={onSetHighlight}
           onMouseDown={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -308,16 +200,16 @@ const Item: FC<ItemProps> = ({
             {isFlat && flatVarIcon}
 
             {!isEnv && !isChatVar && !isRagVariable && (
-              <div title={itemData.variable} className="ml-1 w-0 grow truncate text-text-secondary system-sm-medium">{varName}</div>
+              <div title={itemData.variable} className="system-sm-medium ml-1 w-0 grow truncate text-text-secondary">{varName}</div>
             )}
             {isEnv && (
-              <div title={itemData.variable} className="ml-1 w-0 grow truncate text-text-secondary system-sm-medium">{itemData.variable.replace('env.', '')}</div>
+              <div title={itemData.variable} className="system-sm-medium ml-1 w-0 grow truncate text-text-secondary">{itemData.variable.replace('env.', '')}</div>
             )}
             {isChatVar && (
-              <div title={itemData.des} className="ml-1 w-0 grow truncate text-text-secondary system-sm-medium">{itemData.variable.replace('conversation.', '')}</div>
+              <div title={itemData.des} className="system-sm-medium ml-1 w-0 grow truncate text-text-secondary">{itemData.variable.replace('conversation.', '')}</div>
             )}
             {isRagVariable && (
-              <div title={itemData.des} className="ml-1 w-0 grow truncate text-text-secondary system-sm-medium">{itemData.variable.split('.').slice(-1)[0]}</div>
+              <div title={itemData.des} className="system-sm-medium ml-1 w-0 grow truncate text-text-secondary">{itemData.variable.split('.').slice(-1)[0]}</div>
             )}
           </div>
           <div className="ml-1 shrink-0 text-xs font-normal capitalize text-text-tertiary">{(preferSchemaType && itemData.schemaType) ? itemData.schemaType : itemData.type}</div>
@@ -361,12 +253,8 @@ type Props = {
   isInCodeGeneratorInstructionEditor?: boolean
   showManageInputField?: boolean
   onManageInputField?: () => void
-  showAssembleVariables?: boolean
-  onAssembleVariables?: () => ValueSelector | null
   autoFocus?: boolean
   preferSchemaType?: boolean
-  externalSearchText?: string
-  enableKeyboardNavigation?: boolean
 }
 const VarReferenceVars: FC<Props> = ({
   hideSearch,
@@ -382,19 +270,11 @@ const VarReferenceVars: FC<Props> = ({
   isInCodeGeneratorInstructionEditor,
   showManageInputField,
   onManageInputField,
-  showAssembleVariables,
-  onAssembleVariables,
   autoFocus = true,
   preferSchemaType,
-  externalSearchText,
-  enableKeyboardNavigation = false,
 }) => {
   const { t } = useTranslation()
   const [searchText, setSearchText] = useState('')
-  const normalizedSearchText = externalSearchText === undefined ? searchText : externalSearchText
-  const normalizedSearchTextTrimmed = normalizedSearchText.trim()
-  const normalizedSearchTextLower = normalizedSearchTextTrimmed.toLowerCase()
-  const shouldShowSearchInput = !hideSearch && externalSearchText === undefined
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -403,158 +283,12 @@ const VarReferenceVars: FC<Props> = ({
     }
   }
 
-  const handleAssembleVariables = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    onAssembleVariables?.()
-    onClose?.()
-  }
-
-  const validatedVars = useMemo(() => {
-    const res: NodeOutPutVar[] = []
-    vars.forEach((node) => {
-      const nodeVars = node.vars.filter(v => checkKeys([v.variable], false).isValid || isSpecialVar(v.variable.split('.')[0]))
-      if (nodeVars.length === 0)
-        return
-      res.push({
-        ...node,
-        vars: nodeVars,
-      })
-    })
-    return res
-  }, [vars])
-
-  const filteredVars = useMemo(() => {
-    if (!normalizedSearchTextTrimmed)
-      return validatedVars
-    const res: NodeOutPutVar[] = []
-    validatedVars.forEach((node) => {
-      const titleLower = node.title.toLowerCase()
-      const matchedByTitle = titleLower.includes(normalizedSearchTextLower)
-      const nodeVars = matchedByTitle
-        ? node.vars
-        : node.vars.filter((v) => {
-            if (v.variable.toLowerCase().includes(normalizedSearchTextLower))
-              return true
-            return matchesNestedVar(v, normalizedSearchTextLower)
-          })
-      if (nodeVars.length === 0)
-        return
-      res.push({
-        ...node,
-        vars: nodeVars,
-      })
-    })
-    return res
-  }, [normalizedSearchTextLower, normalizedSearchTextTrimmed, validatedVars])
-
-  const flatItems = useMemo(() => {
-    const items: Array<{ node: NodeOutPutVar, itemData: Var }> = []
-    filteredVars.forEach((node) => {
-      node.vars.forEach((itemData) => {
-        items.push({ node, itemData })
-      })
-    })
-    return items
-  }, [filteredVars])
-  const [activeIndex, setActiveIndex] = useState(-1)
-  const itemRefs = useRef<Array<HTMLDivElement | null>>([])
-  const lastInteractionRef = useRef<'keyboard' | 'mouse' | 'filter' | null>(null)
-  const resolvedActiveIndex = useMemo(() => {
-    if (!enableKeyboardNavigation || flatItems.length === 0)
-      return -1
-    if (activeIndex < 0 || activeIndex >= flatItems.length)
-      return 0
-    return activeIndex
-  }, [activeIndex, enableKeyboardNavigation, flatItems.length])
-  const flatItemsRef = useLatest(flatItems)
-  const activeIndexRef = useLatest(resolvedActiveIndex)
-  const onCloseRef = useLatest(onClose)
-
-  useEffect(() => {
-    itemRefs.current = []
-  }, [flatItems.length])
-
-  const handleHighlightIndex = useCallback((index: number, source: 'keyboard' | 'mouse' | 'filter') => {
-    lastInteractionRef.current = source
-    setActiveIndex(index)
-  }, [])
-
-  useEffect(() => {
-    if (!enableKeyboardNavigation || flatItems.length === 0) {
-      lastInteractionRef.current = 'filter'
-      return
-    }
-    if (activeIndex < 0 || activeIndex >= flatItems.length)
-      lastInteractionRef.current = 'filter'
-  }, [activeIndex, enableKeyboardNavigation, flatItems.length])
-
-  useEffect(() => {
-    if (!enableKeyboardNavigation || resolvedActiveIndex < 0)
-      return
-    if (lastInteractionRef.current !== 'keyboard')
-      return
-    const target = itemRefs.current[resolvedActiveIndex]
-    if (target)
-      target.scrollIntoView({ block: 'nearest' })
-    lastInteractionRef.current = null
-  }, [enableKeyboardNavigation, flatItems.length, resolvedActiveIndex])
-
-  const handleSelectItem = useCallback((item: { node: NodeOutPutVar, itemData: Var }) => {
-    const isStructureOutput = item.itemData.type === VarType.object
-      && (item.itemData.children as StructuredOutput | undefined)?.schema?.properties
-    const isFile = item.itemData.type === VarType.file && !isStructureOutput
-    if (!isSupportFileVar && isFile)
-      return
-    const valueSelector = buildValueSelector({
-      nodeId: item.node.nodeId,
-      objPath: [],
-      itemData: item.itemData,
-      isFlat: item.node.isFlat,
-    })
-    onChange(valueSelector, item.itemData)
-    onClose?.()
-  }, [onChange, onClose, isSupportFileVar])
-
-  useEffect(() => {
-    if (!enableKeyboardNavigation)
-      return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const items = flatItemsRef.current
-      if (items.length === 0)
-        return
-      if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key))
-        return
-      event.preventDefault()
-      event.stopPropagation()
-      if (event.key === 'Escape') {
-        onCloseRef.current?.()
-        return
-      }
-      if (event.key === 'Enter') {
-        const index = activeIndexRef.current
-        if (index < 0 || index >= items.length)
-          return
-        handleSelectItem(items[index])
-        return
-      }
-      const delta = event.key === 'ArrowDown' ? 1 : -1
-      const baseIndex = activeIndexRef.current < 0 ? 0 : activeIndexRef.current
-      const nextIndex = Math.min(Math.max(baseIndex + delta, 0), items.length - 1)
-      handleHighlightIndex(nextIndex, 'keyboard')
-    }
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown, true)
-    }
-  }, [enableKeyboardNavigation, handleHighlightIndex, handleSelectItem])
-
-  let runningIndex = -1
+  const filteredVars = useMemo(() => filterReferenceVars(vars, searchText), [vars, searchText])
 
   return (
     <>
       {
-        shouldShowSearchInput && (
+        !hideSearch && (
           <>
             <div className={cn('var-search-input-wrapper mx-2 mb-2 mt-2', searchBoxClassName)} onClick={e => e.stopPropagation()}>
               <Input
@@ -581,25 +315,6 @@ const VarReferenceVars: FC<Props> = ({
         )
       }
 
-      {
-        showAssembleVariables && onAssembleVariables && (
-          <div className="flex items-center border-t border-divider-subtle pt-1">
-            <button
-              type="button"
-              className="flex h-6 w-full items-center rounded-md pl-3 pr-[18px] text-text-secondary hover:bg-state-base-hover"
-              onClick={handleAssembleVariables}
-              onMouseDown={e => e.preventDefault()}
-            >
-              <span className="mr-1 flex h-4 w-4 items-center justify-center rounded bg-util-colors-blue-blue-500">
-                <AssembleVariables className="h-3 w-3 text-text-primary-on-surface" />
-              </span>
-              <span className="truncate system-xs-medium" title={t('nodes.tool.assembleVariables', { ns: 'workflow' })}>
-                {t('nodes.tool.assembleVariables', { ns: 'workflow' })}
-              </span>
-            </button>
-          </div>
-        )
-      }
       {filteredVars.length > 0
         ? (
             <div className={cn('max-h-[85vh] overflow-y-auto', maxHeightClass)}>
@@ -609,46 +324,35 @@ const VarReferenceVars: FC<Props> = ({
                   <div key={i} className={cn(!item.isFlat && 'mt-3', i === 0 && item.isFlat && 'mt-2')}>
                     {!item.isFlat && (
                       <div
-                        className="truncate px-3 leading-[22px] text-text-tertiary system-xs-medium-uppercase"
+                        className="system-xs-medium-uppercase truncate px-3 leading-[22px] text-text-tertiary"
                         title={item.title}
                       >
                         {item.title}
                       </div>
                     )}
-                    {item.vars.map((v, j) => {
-                      runningIndex += 1
-                      const itemIndex = runningIndex
-                      return (
-                        <Item
-                          key={j}
-                          title={item.title}
-                          nodeId={item.nodeId}
-                          objPath={[]}
-                          itemData={v}
-                          onChange={onChange}
-                          itemWidth={itemWidth}
-                          isSupportFileVar={isSupportFileVar}
-                          isException={v.isException}
-                          isLoopVar={item.isLoop}
-                          isFlat={item.isFlat}
-                          isInCodeGeneratorInstructionEditor={isInCodeGeneratorInstructionEditor}
-                          zIndex={zIndex}
-                          preferSchemaType={preferSchemaType}
-                          isHighlighted={enableKeyboardNavigation && itemIndex === resolvedActiveIndex}
-                          onSetHighlight={enableKeyboardNavigation ? () => handleHighlightIndex(itemIndex, 'mouse') : undefined}
-                          registerRef={enableKeyboardNavigation
-                            ? (element) => {
-                                itemRefs.current[itemIndex] = element
-                              }
-                            : undefined}
-                        />
-                      )
-                    })}
+                    {item.vars.map((v, j) => (
+                      <Item
+                        key={j}
+                        title={item.title}
+                        nodeId={item.nodeId}
+                        objPath={[]}
+                        itemData={v}
+                        onChange={onChange}
+                        itemWidth={itemWidth}
+                        isSupportFileVar={isSupportFileVar}
+                        isException={v.isException}
+                        isLoopVar={item.isLoop}
+                        isFlat={item.isFlat}
+                        isInCodeGeneratorInstructionEditor={isInCodeGeneratorInstructionEditor}
+                        zIndex={zIndex}
+                        preferSchemaType={preferSchemaType}
+                      />
+                    ))}
                     {item.isFlat && !filteredVars[i + 1]?.isFlat && !!filteredVars.find(item => !item.isFlat) && (
-                      <div className="relative mt-[14px] flex items-center space-x-1">
+                      <div className="relative mt-[14px] flex  items-center space-x-1">
                         <div className="h-0 w-3 shrink-0 border border-divider-subtle"></div>
-                        <div className="text-text-tertiary system-2xs-semibold-uppercase">{t('debug.lastOutput', { ns: 'workflow' })}</div>
-                        <div className="h-0 shrink-0 grow border border-divider-subtle"></div>
+                        <div className="system-2xs-semibold-uppercase text-text-tertiary">{t('debug.lastOutput', { ns: 'workflow' })}</div>
+                        <div className="h-0  shrink-0 grow border border-divider-subtle"></div>
                       </div>
                     )}
                   </div>

@@ -54,21 +54,18 @@ type Props = {
   nodeOutputVars: NodeOutPutVar[]
   availableNodes: Node[]
   nodeId: string
-  disableVariableReference?: boolean
 }
 
 const ReasoningConfigForm: React.FC<Props> = ({
   value,
   onChange,
   schemas,
-  nodeOutputVars = [],
-  availableNodes = [],
+  nodeOutputVars,
+  availableNodes,
   nodeId,
-  disableVariableReference = false,
 }) => {
   const { t } = useTranslation()
   const language = useLanguage()
-  const allowVariableReference = !disableVariableReference && !!nodeId
   const getVarKindType = (type: string) => {
     if (type === FormTypeEnum.file || type === FormTypeEnum.files)
       return VarKindType.variable
@@ -78,10 +75,7 @@ const ReasoningConfigForm: React.FC<Props> = ({
       return VarKindType.mixed
   }
 
-  // eslint-disable-next-line ts/no-explicit-any
-  const handleAutomatic = (key: string, val: any, type: FormTypeEnum) => {
-    if (type === FormTypeEnum.modelSelector)
-      return
+  const handleAutomatic = (key: string, val: boolean, type: string) => {
     onChange({
       ...value,
       [key]: {
@@ -170,8 +164,7 @@ const ReasoningConfigForm: React.FC<Props> = ({
       placeholder,
       options,
     } = schema
-    const canUseAuto = ![FormTypeEnum.modelSelector, FormTypeEnum.appSelector].includes(type as FormTypeEnum)
-    const auto = canUseAuto ? value[variable]?.auto : 0
+    const auto = value[variable]?.auto
     const tooltipContent = (tooltip && (
       <Tooltip
         popupContent={(
@@ -196,7 +189,7 @@ const ReasoningConfigForm: React.FC<Props> = ({
     const isModelSelector = type === FormTypeEnum.modelSelector
     const showTypeSwitch = isNumber || isObject || isArray
     const isConstant = varInput?.type === VarKindType.constant || !varInput?.type
-    const showVariableSelector = allowVariableReference && (isFile || varInput?.type === VarKindType.variable)
+    const showVariableSelector = isFile || varInput?.type === VarKindType.variable
     const targetVarType = () => {
       if (isString)
         return VarType.string
@@ -233,19 +226,19 @@ const ReasoningConfigForm: React.FC<Props> = ({
 
     return (
       <div key={variable} className="space-y-0.5">
-        <div className="flex items-center justify-between py-2 text-text-secondary system-sm-semibold">
+        <div className="system-sm-semibold flex items-center justify-between py-2 text-text-secondary">
           <div className="flex items-center">
-            <span className={cn('max-w-[140px] truncate text-text-secondary code-sm-semibold')} title={label[language] || label.en_US}>{label[language] || label.en_US}</span>
+            <span className={cn('code-sm-semibold max-w-[140px] truncate text-text-secondary')} title={label[language] || label.en_US}>{label[language] || label.en_US}</span>
             {required && (
               <span className="ml-1 text-red-500">*</span>
             )}
             {tooltipContent}
-            <span className="mx-1 text-text-quaternary system-xs-regular">·</span>
-            <span className="text-text-tertiary system-xs-regular">{targetVarType()}</span>
+            <span className="system-xs-regular mx-1 text-text-quaternary">·</span>
+            <span className="system-xs-regular text-text-tertiary">{targetVarType()}</span>
             {isShowJSONEditor && (
               <Tooltip
                 popupContent={(
-                  <div className="text-text-secondary system-xs-medium">
+                  <div className="system-xs-medium text-text-secondary">
                     {t('nodes.agent.clickToViewParameterSchema', { ns: 'workflow' })}
                   </div>
                 )}
@@ -261,36 +254,26 @@ const ReasoningConfigForm: React.FC<Props> = ({
             )}
 
           </div>
-          {canUseAuto && (
-            <div className="flex cursor-pointer items-center gap-1 rounded-[6px] border border-divider-subtle bg-background-default-lighter px-2 py-1 hover:bg-state-base-hover" onClick={() => handleAutomatic(variable, !auto, type as FormTypeEnum)}>
-              <span className="text-text-secondary system-xs-medium">{t('detailPanel.toolSelector.auto', { ns: 'plugin' })}</span>
-              <Switch
-                size="xs"
-                defaultValue={!!auto}
-                onChange={val => handleAutomatic(variable, val, type as FormTypeEnum)}
-              />
-            </div>
-          )}
+          <div className="flex cursor-pointer items-center gap-1 rounded-[6px] border border-divider-subtle bg-background-default-lighter px-2 py-1 hover:bg-state-base-hover" onClick={() => handleAutomatic(variable, !auto, type)}>
+            <span className="system-xs-medium text-text-secondary">{t('detailPanel.toolSelector.auto', { ns: 'plugin' })}</span>
+            <Switch
+              size="xs"
+              value={!!auto}
+              onChange={val => handleAutomatic(variable, val, type)}
+            />
+          </div>
         </div>
         {auto === 0 && (
           <div className={cn('gap-1', !(isShowJSONEditor && isConstant) && 'flex')}>
             {showTypeSwitch && (
               <FormInputTypeSwitch value={varInput?.type || VarKindType.constant} onChange={handleTypeChange(variable, defaultValue)} />
             )}
-            {isString && allowVariableReference && (
+            {isString && (
               <MixedVariableTextInput
                 value={varInput?.value as string || ''}
                 onChange={handleValueChange(variable, type)}
                 nodesOutputVars={nodeOutputVars}
                 availableNodes={availableNodes}
-              />
-            )}
-            {isString && !allowVariableReference && (
-              <Input
-                className="h-8 grow"
-                value={varInput?.value as string || ''}
-                onChange={e => handleValueChange(variable, type as FormTypeEnum)(e.target.value)}
-                placeholder={placeholder?.[language] || placeholder?.en_US}
               />
             )}
             {isNumber && isConstant && (
@@ -361,7 +344,7 @@ const ReasoningConfigForm: React.FC<Props> = ({
                 className="h-8 grow"
                 readonly={false}
                 isShowNodeName
-                nodeId={nodeId || ''}
+                nodeId={nodeId}
                 value={(varInput?.value as string | ValueSelector) || []}
                 onChange={handleVariableSelectorChange(variable)}
                 filterVar={getFilterVar()}

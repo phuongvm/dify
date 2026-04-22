@@ -1,28 +1,11 @@
 import type { ModelAndParameter } from '../configuration/debug/types'
-import type { CollaborationUpdate } from '@/app/components/workflow/collaboration/types/collaboration'
 import type { InputVar, Variable } from '@/app/components/workflow/types'
-import type { InstalledApp } from '@/models/explore'
 import type { I18nKeysByPrefix } from '@/types/i18n'
 import type { PublishWorkflowParams } from '@/types/workflow'
-import {
-  RiArrowDownSLine,
-  RiArrowRightSLine,
-  RiBuildingLine,
-  RiGlobalLine,
-  RiLoader2Line,
-  RiLockLine,
-  RiPlanetLine,
-  RiPlayCircleLine,
-  RiPlayList2Line,
-  RiStore2Line,
-  RiTerminalBoxLine,
-  RiVerifiedBadgeLine,
-} from '@remixicon/react'
 import { useKeyPress } from 'ahooks'
 import {
   memo,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -40,19 +23,14 @@ import {
 } from '@/app/components/base/portal-to-follow-elem'
 import UpgradeBtn from '@/app/components/billing/upgrade-btn'
 import WorkflowToolConfigureButton from '@/app/components/tools/workflow-tool/configure-button'
-import { collaborationManager } from '@/app/components/workflow/collaboration/core/collaboration-manager'
-import { webSocketClient } from '@/app/components/workflow/collaboration/core/websocket-manager'
-import { WorkflowContext } from '@/app/components/workflow/context'
 import { appDefaultIconBackground } from '@/config'
 import { useGlobalPublicStore } from '@/context/global-public-context'
 import { useAsyncWindowOpen } from '@/hooks/use-async-window-open'
 import { useFormatTimeFromNow } from '@/hooks/use-format-time-from-now'
 import { AccessMode } from '@/models/access-control'
 import { useAppWhiteListSubjects, useGetUserCanAccessApp } from '@/service/access-control'
-import { fetchAppDetailDirect, publishToCreatorsPlatform } from '@/service/apps'
+import { fetchAppDetailDirect } from '@/service/apps'
 import { fetchInstalledAppList } from '@/service/explore'
-import { useInvalidateAppWorkflow } from '@/service/use-workflow'
-import { fetchPublishedWorkflow } from '@/service/workflow'
 import { AppModeEnum } from '@/types/app'
 import { basePath } from '@/utils/var'
 import Divider from '../../base/divider'
@@ -67,26 +45,22 @@ import SuggestedAction from './suggested-action'
 
 type AccessModeLabel = I18nKeysByPrefix<'app', 'accessControlDialog.accessItems.'>
 
-type InstalledAppsResponse = {
-  installed_apps?: InstalledApp[]
-}
-
-const ACCESS_MODE_MAP: Record<AccessMode, { label: AccessModeLabel, icon: React.ElementType }> = {
+const ACCESS_MODE_MAP: Record<AccessMode, { label: AccessModeLabel, icon: string }> = {
   [AccessMode.ORGANIZATION]: {
     label: 'organization',
-    icon: RiBuildingLine,
+    icon: 'i-ri-building-line',
   },
   [AccessMode.SPECIFIC_GROUPS_MEMBERS]: {
     label: 'specific',
-    icon: RiLockLine,
+    icon: 'i-ri-lock-line',
   },
   [AccessMode.PUBLIC]: {
     label: 'anyone',
-    icon: RiGlobalLine,
+    icon: 'i-ri-global-line',
   },
   [AccessMode.EXTERNAL_MEMBERS]: {
     label: 'external',
-    icon: RiVerifiedBadgeLine,
+    icon: 'i-ri-verified-badge-line',
   },
 }
 
@@ -96,11 +70,11 @@ const AccessModeDisplay: React.FC<{ mode?: AccessMode }> = ({ mode }) => {
   if (!mode || !ACCESS_MODE_MAP[mode])
     return null
 
-  const { icon: Icon, label } = ACCESS_MODE_MAP[mode]
+  const { icon, label } = ACCESS_MODE_MAP[mode]
 
   return (
     <>
-      <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
+      <span className={`${icon} h-4 w-4 shrink-0 text-text-secondary`} />
       <div className="grow truncate">
         <span className="text-text-secondary system-sm-medium">{t(`accessControlDialog.accessItems.${label}`, { ns: 'app' })}</span>
       </div>
@@ -117,8 +91,8 @@ export type AppPublisherProps = {
   debugWithMultipleModel?: boolean
   multipleModelConfigs?: ModelAndParameter[]
   /** modelAndParameter is passed when debugWithMultipleModel is true */
-  onPublish?: (params?: ModelAndParameter | PublishWorkflowParams) => Promise<void> | void
-  onRestore?: () => Promise<void> | void
+  onPublish?: (params?: any) => Promise<any> | any
+  onRestore?: () => Promise<any> | any
   onToggle?: (state: boolean) => void
   crossAxisOffset?: number
   toolPublished?: boolean
@@ -129,7 +103,6 @@ export type AppPublisherProps = {
   missingStartNode?: boolean
   hasTriggerNode?: boolean // Whether workflow currently contains any trigger nodes (used to hide missing-start CTA when triggers exist).
   startNodeLimitExceeded?: boolean
-  publishLoading?: boolean
   hasHumanInputNode?: boolean
 }
 
@@ -154,7 +127,6 @@ const AppPublisher = ({
   missingStartNode = false,
   hasTriggerNode = false,
   startNodeLimitExceeded = false,
-  publishLoading = false,
   hasHumanInputNode = false,
 }: AppPublisherProps) => {
   const { t } = useTranslation()
@@ -164,9 +136,7 @@ const AppPublisher = ({
   const [showAppAccessControl, setShowAppAccessControl] = useState(false)
 
   const [embeddingModalOpen, setEmbeddingModalOpen] = useState(false)
-  const [publishingToMarketplace, setPublishingToMarketplace] = useState(false)
 
-  const workflowStore = useContext(WorkflowContext)
   const appDetail = useAppStore(state => state.appDetail)
   const setAppDetail = useAppStore(s => s.setAppDetail)
   const systemFeatures = useGlobalPublicStore(s => s.systemFeatures)
@@ -179,7 +149,6 @@ const AppPublisher = ({
 
   const { data: userCanAccessApp, isLoading: isGettingUserCanAccessApp, refetch } = useGetUserCanAccessApp({ appId: appDetail?.id, enabled: false })
   const { data: appAccessSubjects, isLoading: isGettingAppWhiteListSubjects } = useAppWhiteListSubjects(appDetail?.id, open && systemFeatures.webapp_auth.enabled && appDetail?.access_mode === AccessMode.SPECIFIC_GROUPS_MEMBERS)
-  const invalidateAppWorkflow = useInvalidateAppWorkflow()
   const openAsyncWindow = useAsyncWindowOpen()
 
   const isAppAccessSet = useMemo(() => {
@@ -210,35 +179,12 @@ const AppPublisher = ({
     try {
       await onPublish?.(params)
       setPublished(true)
-
-      const appId = appDetail?.id
-      const socket = appId ? webSocketClient.getSocket(appId) : null
-      if (appId)
-        invalidateAppWorkflow(appId)
-      else
-        console.warn('[app-publisher] missing appId, skip workflow invalidate and socket emit')
-      if (socket) {
-        const timestamp = Date.now()
-        socket.emit('collaboration_event', {
-          type: 'app_publish_update',
-          data: {
-            action: 'published',
-            timestamp,
-          },
-          timestamp,
-        })
-      }
-      else if (appId) {
-        console.warn('[app-publisher] socket not ready, skip collaboration_event emit', { appId })
-      }
-
       trackEvent('app_published_time', { action_mode: 'app', app_id: appDetail?.id, app_name: appDetail?.name })
     }
-    catch (error) {
-      console.warn('[app-publisher] publish failed', error)
+    catch {
       setPublished(false)
     }
-  }, [appDetail, onPublish, invalidateAppWorkflow])
+  }, [appDetail, onPublish])
 
   const handleRestore = useCallback(async () => {
     try {
@@ -267,10 +213,9 @@ const AppPublisher = ({
     await openAsyncWindow(async () => {
       if (!appDetail?.id)
         throw new Error('App not found')
-      const response = (await fetchInstalledAppList(appDetail?.id)) as InstalledAppsResponse
-      const installedApps = response?.installed_apps
-      if (installedApps?.length)
-        return `${basePath}/explore/installed/${installedApps[0].id}`
+      const { installed_apps } = await fetchInstalledAppList(appDetail.id)
+      if (installed_apps?.length > 0)
+        return `${basePath}/explore/installed/${installed_apps[0].id}`
       throw new Error('No app found in Explore')
     }, {
       onError: (err) => {
@@ -291,51 +236,12 @@ const AppPublisher = ({
     }
   }, [appDetail, setAppDetail])
 
-  const handlePublishToMarketplace = useCallback(async () => {
-    if (!appDetail?.id || publishingToMarketplace)
-      return
-    setPublishingToMarketplace(true)
-    try {
-      const result = await publishToCreatorsPlatform({ appID: appDetail.id })
-      window.open(result.redirect_url, '_blank')
-    }
-    catch (error: any) {
-      Toast.notify({ type: 'error', message: error.message || t('common.publishToMarketplaceFailed', { ns: 'workflow' }) })
-    }
-    finally {
-      setPublishingToMarketplace(false)
-    }
-  }, [appDetail?.id, publishingToMarketplace, t])
-
   useKeyPress(`${getKeyboardKeyCodeBySystem('ctrl')}.shift.p`, (e) => {
     e.preventDefault()
-    if (publishDisabled || published || publishLoading)
+    if (publishDisabled || published)
       return
     handlePublish()
   }, { exactMatch: true, useCapture: true })
-
-  useEffect(() => {
-    const appId = appDetail?.id
-    if (!appId)
-      return
-
-    const unsubscribe = collaborationManager.onAppPublishUpdate((update: CollaborationUpdate) => {
-      const action = typeof update.data.action === 'string' ? update.data.action : undefined
-      if (action === 'published') {
-        invalidateAppWorkflow(appId)
-        fetchPublishedWorkflow(`/apps/${appId}/workflows/publish`)
-          .then((publishedWorkflow) => {
-            if (publishedWorkflow?.created_at)
-              workflowStore?.getState().setPublishedAt(publishedWorkflow.created_at)
-          })
-          .catch((error) => {
-            console.warn('[app-publisher] refresh published workflow failed', error)
-          })
-      }
-    })
-
-    return unsubscribe
-  }, [appDetail?.id, invalidateAppWorkflow, workflowStore])
 
   const hasPublishedVersion = !!publishedAt
   const workflowToolDisabled = !hasPublishedVersion || !workflowToolAvailable
@@ -363,11 +269,10 @@ const AppPublisher = ({
           <Button
             variant="primary"
             className="py-2 pl-3 pr-2"
-            disabled={disabled || publishLoading}
-            loading={publishLoading}
+            disabled={disabled}
           >
             {t('common.publish', { ns: 'workflow' })}
-            <RiArrowDownSLine className="h-4 w-4 text-components-button-primary-text" />
+            <span className="i-ri-arrow-down-s-line h-4 w-4 text-components-button-primary-text" />
           </Button>
         </PortalToFollowElemTrigger>
         <PortalToFollowElemContent className="z-[11]">
@@ -418,20 +323,17 @@ const AppPublisher = ({
                         variant="primary"
                         className="mt-3 w-full"
                         onClick={() => handlePublish()}
-                        disabled={publishDisabled || published || publishLoading}
-                        loading={publishLoading}
+                        disabled={publishDisabled || published}
                       >
                         {
-                          publishLoading
-                            ? t('common.publishing', { ns: 'workflow' })
-                            : published
-                              ? t('common.published', { ns: 'workflow' })
-                              : (
-                                  <div className="flex gap-1">
-                                    <span>{t('common.publishUpdate', { ns: 'workflow' })}</span>
-                                    <ShortcutsName keys={PUBLISH_SHORTCUT} bgColor="white" />
-                                  </div>
-                                )
+                          published
+                            ? t('common.published', { ns: 'workflow' })
+                            : (
+                                <div className="flex gap-1">
+                                  <span>{t('common.publishUpdate', { ns: 'workflow' })}</span>
+                                  <ShortcutsName keys={PUBLISH_SHORTCUT} bgColor="white" />
+                                </div>
+                              )
                         }
                       </Button>
                       {showStartNodeLimitHint && (
@@ -476,7 +378,7 @@ const AppPublisher = ({
                           </div>
                           {!isAppAccessSet && <p className="shrink-0 text-text-tertiary system-xs-regular">{t('publishApp.notSet', { ns: 'app' })}</p>}
                           <div className="flex h-4 w-4 shrink-0 items-center justify-center">
-                            <RiArrowRightSLine className="h-4 w-4 text-text-quaternary" />
+                            <span className="i-ri-arrow-right-s-line h-4 w-4 text-text-quaternary" />
                           </div>
                         </div>
                         {!isAppAccessSet && <p className="mt-1 text-text-warning system-xs-regular">{t('publishApp.notSetDesc', { ns: 'app' })}</p>}
@@ -491,7 +393,7 @@ const AppPublisher = ({
                               className="flex-1"
                               disabled={disabledFunctionButton}
                               link={appURL}
-                              icon={<RiPlayCircleLine className="h-4 w-4" />}
+                              icon={<span className="i-ri-play-circle-line h-4 w-4" />}
                             >
                               {t('common.runApp', { ns: 'workflow' })}
                             </SuggestedAction>
@@ -503,7 +405,7 @@ const AppPublisher = ({
                                     className="flex-1"
                                     disabled={disabledFunctionButton}
                                     link={`${appURL}${appURL.includes('?') ? '&' : '?'}mode=batch`}
-                                    icon={<RiPlayList2Line className="h-4 w-4" />}
+                                    icon={<span className="i-ri-play-list-2-line h-4 w-4" />}
                                   >
                                     {t('common.batchRunApp', { ns: 'workflow' })}
                                   </SuggestedAction>
@@ -529,7 +431,7 @@ const AppPublisher = ({
                                   handleOpenInExplore()
                               }}
                               disabled={disabledFunctionButton}
-                              icon={<RiPlanetLine className="h-4 w-4" />}
+                              icon={<span className="i-ri-planet-line h-4 w-4" />}
                             >
                               {t('common.openInExplore', { ns: 'workflow' })}
                             </SuggestedAction>
@@ -539,7 +441,7 @@ const AppPublisher = ({
                               className="flex-1"
                               disabled={!publishedAt || missingStartNode}
                               link="./develop"
-                              icon={<RiTerminalBoxLine className="h-4 w-4" />}
+                              icon={<span className="i-ri-terminal-box-line h-4 w-4" />}
                             >
                               {t('common.accessAPIReference', { ns: 'workflow' })}
                             </SuggestedAction>
@@ -566,22 +468,6 @@ const AppPublisher = ({
                         </div>
                       )
                     }
-                    {systemFeatures.enable_creators_platform && (
-                      <div className="flex flex-col gap-y-1 border-t-[0.5px] border-t-divider-regular p-4 pt-3">
-                        <SuggestedAction
-                          className="flex-1"
-                          onClick={handlePublishToMarketplace}
-                          disabled={publishingToMarketplace}
-                          icon={publishingToMarketplace
-                            ? <RiLoader2Line className="h-4 w-4 animate-spin" />
-                            : <RiStore2Line className="h-4 w-4" />}
-                        >
-                          {publishingToMarketplace
-                            ? t('common.publishingToMarketplace', { ns: 'workflow' })
-                            : t('common.publishToMarketplace', { ns: 'workflow' })}
-                        </SuggestedAction>
-                      </div>
-                    )}
                   </>
                 )}
           </div>

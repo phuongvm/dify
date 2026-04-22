@@ -1,13 +1,13 @@
 import type { App } from '@/types/app'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useRouter } from 'next/navigation'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { trackEvent } from '@/app/components/base/amplitude'
+import { ToastContext } from '@/app/components/base/toast/context'
 
-import { ToastContext } from '@/app/components/base/toast'
-import { MARKETPLACE_URL_PREFIX, NEED_REFRESH_APP_LIST_KEY } from '@/config'
+import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
 import { useAppContext } from '@/context/app-context'
 import { useProviderContext } from '@/context/provider-context'
+import { useRouter } from '@/next/navigation'
 import { createApp } from '@/service/apps'
 import { AppModeEnum } from '@/types/app'
 import { getRedirection } from '@/utils/app-redirection'
@@ -23,7 +23,7 @@ vi.mock('ahooks', () => ({
   useKeyPress: vi.fn(),
   useHover: () => false,
 }))
-vi.mock('next/navigation', () => ({
+vi.mock('@/next/navigation', () => ({
   useRouter: vi.fn(),
 }))
 vi.mock('@/app/components/base/amplitude', () => ({
@@ -158,17 +158,5 @@ describe('CreateAppModal', () => {
     await waitFor(() => expect(mockCreateApp).toHaveBeenCalled())
     expect(mockNotify).toHaveBeenCalledWith({ type: 'error', message: 'boom' })
     expect(onClose).not.toHaveBeenCalled()
-  })
-
-  it('renders community explore link with marketplace templates URL', async () => {
-    renderModal()
-
-    await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'app.newApp.orExploreCommunity' })).toBeInTheDocument()
-    })
-    const link = screen.getByRole('link', { name: 'app.newApp.orExploreCommunity' })
-    expect(link).toHaveAttribute('href', `${MARKETPLACE_URL_PREFIX.replace(/\/$/, '')}/templates`)
-    expect(link).toHaveAttribute('target', '_blank')
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })
 })

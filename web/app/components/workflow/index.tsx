@@ -2,16 +2,11 @@
 
 import type { FC } from 'react'
 import type {
-  NodeMouseHandler,
   Viewport,
 } from 'reactflow'
-import type { CursorPosition, OnlineUser } from './collaboration/types'
 import type { Shape as HooksStoreShape } from './hooks-store'
-import type { WorkflowSliceShape } from './store/workflow/workflow-slice'
 import type {
-  ConversationVariable,
   Edge,
-  EnvironmentVariable,
   Node,
 } from './types'
 import type { VarInInspect } from '@/types/workflow'
@@ -20,9 +15,7 @@ import {
 } from 'ahooks'
 import { isEqual } from 'es-toolkit/predicate'
 import { setAutoFreeze } from 'immer'
-import dynamic from 'next/dynamic'
 import {
-  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -30,7 +23,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { useTranslation } from 'react-i18next'
 import ReactFlow, {
   Background,
   ReactFlowProvider,
@@ -42,9 +34,9 @@ import ReactFlow, {
   useReactFlow,
   useStoreApi,
 } from 'reactflow'
-import Toast from '@/app/components/base/toast'
 import { IS_DEV } from '@/config'
 import { useEventEmitterContextContext } from '@/context/event-emitter'
+import dynamic from '@/next/dynamic'
 import {
   useAllBuiltInTools,
   useAllCustomTools,
@@ -54,10 +46,6 @@ import {
 import { fetchAllInspectVars } from '@/service/workflow'
 import { cn } from '@/utils/classnames'
 import CandidateNode from './candidate-node'
-import { collaborationManager } from './collaboration'
-import UserCursors from './collaboration/components/user-cursors'
-import { CommentCursor, CommentIcon, CommentInput, CommentThread } from './comment'
-import CommentManager from './comment-manager'
 import {
   CUSTOM_EDGE,
   CUSTOM_NODE,
@@ -66,19 +54,11 @@ import {
 } from './constants'
 import CustomConnectionLine from './custom-connection-line'
 import CustomEdge from './custom-edge'
-import {
-  CUSTOM_GROUP_EXIT_PORT_NODE,
-  CUSTOM_GROUP_INPUT_NODE,
-  CUSTOM_GROUP_NODE,
-  CustomGroupExitPortNode,
-  CustomGroupInputNode,
-  CustomGroupNode,
-} from './custom-group-node'
 import DatasetsDetailProvider from './datasets-detail-store/provider'
+import EdgeContextmenu from './edge-contextmenu'
 import HelpLine from './help-line'
 import {
   useEdgesInteractions,
-  useLeaderRestoreListener,
   useNodesInteractions,
   useNodesReadOnly,
   useNodesSyncDraft,
@@ -91,7 +71,6 @@ import {
   useWorkflowRefreshDraft,
 } from './hooks'
 import { HooksStoreContextProvider, useHooksStore } from './hooks-store'
-import { useWorkflowComment } from './hooks/use-workflow-comment'
 import { useWorkflowSearch } from './hooks/use-workflow-search'
 import NodeContextmenu from './node-contextmenu'
 import CustomNode from './nodes'
@@ -102,8 +81,6 @@ import CustomIterationStartNode from './nodes/iteration-start'
 import { CUSTOM_ITERATION_START_NODE } from './nodes/iteration-start/constants'
 import CustomLoopStartNode from './nodes/loop-start'
 import { CUSTOM_LOOP_START_NODE } from './nodes/loop-start/constants'
-import CustomSubGraphStartNode from './nodes/sub-graph-start'
-import { CUSTOM_SUB_GRAPH_START_NODE } from './nodes/sub-graph-start/constants'
 import CustomNoteNode from './note-node'
 import { CUSTOM_NOTE_NODE } from './note-node/constants'
 import Operator from './operator'
@@ -118,7 +95,6 @@ import {
 } from './store'
 import SyncingDataModal from './syncing-data-modal'
 import {
-  BlockEnum,
   ControlMode,
   WorkflowRunningStatus,
 } from './types'
@@ -135,31 +111,12 @@ const nodeTypes = {
   [CUSTOM_NODE]: CustomNode,
   [CUSTOM_NOTE_NODE]: CustomNoteNode,
   [CUSTOM_SIMPLE_NODE]: CustomSimpleNode,
-  [CUSTOM_SUB_GRAPH_START_NODE]: CustomSubGraphStartNode,
   [CUSTOM_ITERATION_START_NODE]: CustomIterationStartNode,
   [CUSTOM_LOOP_START_NODE]: CustomLoopStartNode,
   [CUSTOM_DATA_SOURCE_EMPTY_NODE]: CustomDataSourceEmptyNode,
-  [CUSTOM_GROUP_NODE]: CustomGroupNode,
-  [CUSTOM_GROUP_INPUT_NODE]: CustomGroupInputNode,
-  [CUSTOM_GROUP_EXIT_PORT_NODE]: CustomGroupExitPortNode,
 }
 const edgeTypes = {
   [CUSTOM_EDGE]: CustomEdge,
-}
-
-export enum InteractionMode {
-  Default = 'default',
-  Subgraph = 'subgraph',
-}
-
-type WorkflowDataUpdatePayload = {
-  nodes: Node[]
-  edges: Edge[]
-  viewport?: Viewport
-  hash?: string
-  features?: unknown
-  conversation_variables?: ConversationVariable[]
-  environment_variables?: EnvironmentVariable[]
 }
 
 export type WorkflowProps = {
@@ -167,64 +124,18 @@ export type WorkflowProps = {
   edges: Edge[]
   viewport?: Viewport
   children?: React.ReactNode
-  onWorkflowDataUpdate?: (v: WorkflowDataUpdatePayload) => void
-  allowSelectionWhenReadOnly?: boolean
-  canvasReadOnly?: boolean
-  interactionMode?: InteractionMode
-  cursors?: Record<string, CursorPosition>
-  myUserId?: string | null
-  onlineUsers?: OnlineUser[]
+  onWorkflowDataUpdate?: (v: any) => void
 }
-
-const CommentPlacementPreview = memo(({
-  onSubmit,
-  onCancel,
-}: {
-  onSubmit: (content: string, mentionedUserIds: string[]) => void
-  onCancel: () => void
-}) => {
-  const isCommentPlacing = useStore(s => s.isCommentPlacing)
-  const pendingComment = useStore(s => s.pendingComment)
-  const mousePosition = useStore(s => s.mousePosition)
-
-  if (!isCommentPlacing || pendingComment)
-    return null
-
-  return (
-    <CommentInput
-      position={{
-        x: mousePosition.elementX,
-        y: mousePosition.elementY,
-      }}
-      onSubmit={onSubmit}
-      onCancel={onCancel}
-      autoFocus={false}
-      disabled
-    />
-  )
-})
-
-CommentPlacementPreview.displayName = 'CommentPlacementPreview'
-
 export const Workflow: FC<WorkflowProps> = memo(({
   nodes: originalNodes,
   edges: originalEdges,
   viewport,
   children,
   onWorkflowDataUpdate,
-  allowSelectionWhenReadOnly = false,
-  canvasReadOnly = false,
-  interactionMode = 'default',
-  cursors,
-  myUserId,
-  onlineUsers,
 }) => {
   const workflowContainerRef = useRef<HTMLDivElement>(null)
-  const { t } = useTranslation()
   const workflowStore = useWorkflowStore()
   const reactflow = useReactFlow()
-  const store = useStoreApi()
-  const [isMouseOverCanvas, setIsMouseOverCanvas] = useState(false)
   const [nodes, setNodes] = useNodesState(originalNodes)
   const [edges, setEdges] = useEdgesState(originalEdges)
   const controlMode = useStore(s => s.controlMode)
@@ -273,34 +184,12 @@ export const Workflow: FC<WorkflowProps> = memo(({
       id: node.id,
       data: node.data,
     }))
-    if (!isEqual(oldData, nodesData)) {
+    if (!isEqual(oldData, nodesData))
       setNodesInStore(nodes)
-    }
-  }, [setNodesInStore])
+  }, [setNodesInStore, workflowStore])
   useEffect(() => {
     setNodesOnlyChangeWithData(currentNodes as Node[])
   }, [currentNodes, setNodesOnlyChangeWithData])
-  useEffect(() => {
-    return collaborationManager.onGraphImport(({ nodes: importedNodes, edges: importedEdges }) => {
-      if (!isEqual(nodes, importedNodes)) {
-        setNodes(importedNodes)
-        store.getState().setNodes(importedNodes)
-      }
-      if (!isEqual(edges, importedEdges)) {
-        setEdges(importedEdges)
-        store.getState().setEdges(importedEdges)
-      }
-    })
-  }, [edges, nodes, setEdges, setNodes, store])
-
-  useEffect(() => {
-    return collaborationManager.onHistoryAction((_) => {
-      Toast.notify({
-        type: 'info',
-        message: t('collaboration.historyAction.generic', { ns: 'workflow' }),
-      })
-    })
-  }, [t])
   const {
     handleSyncWorkflowDraft,
     syncWorkflowDraftWhenPageClose,
@@ -308,56 +197,14 @@ export const Workflow: FC<WorkflowProps> = memo(({
   const { workflowReadOnly } = useWorkflowReadOnly()
   const { nodesReadOnly } = useNodesReadOnly()
   const { eventEmitter } = useEventEmitterContextContext()
-  const {
-    comments,
-    pendingComment,
-    activeComment,
-    activeCommentLoading,
-    replySubmitting,
-    replyUpdating,
-    handleCommentSubmit,
-    handleCommentCancel,
-    handleCommentIconClick,
-    handleActiveCommentClose,
-    handleCommentResolve,
-    handleCommentDelete,
-    handleCommentReply,
-    handleCommentReplyUpdate,
-    handleCommentReplyDelete,
-    handleCommentPositionUpdate,
-  } = useWorkflowComment()
-  const showUserComments = useStore(s => s.showUserComments)
-  const showUserCursors = useStore(s => s.showUserCursors)
-  const showResolvedComments = useStore(s => s.showResolvedComments)
-  const isCommentPreviewHovering = useStore(s => s.isCommentPreviewHovering)
-  const isCommentPlacing = useStore(s => s.isCommentPlacing)
-  const setCommentPlacing = useStore(s => s.setCommentPlacing)
-  const setCommentQuickAdd = useStore(s => s.setCommentQuickAdd)
-  const setPendingCommentState = useStore(s => s.setPendingComment)
-  const isCommentInputActive = Boolean(pendingComment) || isCommentPlacing
-  const visibleComments = useMemo(() => {
-    if (showResolvedComments)
-      return comments
-    return comments.filter(comment => !comment.resolved)
-  }, [comments, showResolvedComments])
-  const handleVisibleCommentNavigate = useCallback((direction: 'prev' | 'next') => {
-    if (!activeComment)
-      return
-    const idx = visibleComments.findIndex(comment => comment.id === activeComment.id)
-    if (idx === -1)
-      return
-    const target = direction === 'prev' ? visibleComments[idx - 1] : visibleComments[idx + 1]
-    if (target)
-      handleCommentIconClick(target)
-  }, [activeComment, handleCommentIconClick, visibleComments])
 
+  const store = useStoreApi()
   eventEmitter?.useSubscription((v: any) => {
     if (v.type === WORKFLOW_DATA_UPDATE) {
-      if (interactionMode === InteractionMode.Subgraph)
-        return
       setNodes(v.payload.nodes)
       store.getState().setNodes(v.payload.nodes)
       setEdges(v.payload.edges)
+      workflowStore.setState({ edgeMenu: undefined })
 
       if (v.payload.viewport)
         reactflow.setViewport(v.payload.viewport)
@@ -385,16 +232,6 @@ export const Workflow: FC<WorkflowProps> = memo(({
     }
   }, [handleSyncWorkflowDraft])
 
-  const handlePendingCommentPositionChange = useCallback((position: NonNullable<WorkflowSliceShape['pendingComment']>) => {
-    setPendingCommentState(position)
-  }, [setPendingCommentState])
-
-  const handleCommentPlacementCancel = useCallback(() => {
-    setPendingCommentState(null)
-    setCommentPlacing(false)
-    setCommentQuickAdd(false)
-  }, [setCommentPlacing, setCommentQuickAdd, setPendingCommentState])
-
   const { handleRefreshWorkflowDraft } = useWorkflowRefreshDraft()
   const handleSyncWorkflowDraftWhenPageClose = useCallback(() => {
     if (document.visibilityState === 'hidden') {
@@ -417,33 +254,6 @@ export const Workflow: FC<WorkflowProps> = memo(({
   const handleBeforeUnload = useCallback(() => {
     syncWorkflowDraftWhenPageClose()
   }, [syncWorkflowDraftWhenPageClose])
-
-  // Optimized comment deletion using showConfirm
-  const handleCommentDeleteClick = useCallback((commentId: string) => {
-    if (!showConfirm) {
-      setShowConfirm({
-        title: t('comments.confirm.deleteThreadTitle', { ns: 'workflow' }),
-        desc: t('comments.confirm.deleteThreadDesc', { ns: 'workflow' }),
-        onConfirm: async () => {
-          await handleCommentDelete(commentId)
-          setShowConfirm(undefined)
-        },
-      })
-    }
-  }, [showConfirm, setShowConfirm, handleCommentDelete, t])
-
-  const handleCommentReplyDeleteClick = useCallback((commentId: string, replyId: string) => {
-    if (!showConfirm) {
-      setShowConfirm({
-        title: t('comments.confirm.deleteReplyTitle', { ns: 'workflow' }),
-        desc: t('comments.confirm.deleteReplyDesc', { ns: 'workflow' }),
-        onConfirm: async () => {
-          await handleCommentReplyDelete(commentId, replyId)
-          setShowConfirm(undefined)
-        },
-      })
-    }
-  }, [showConfirm, setShowConfirm, handleCommentReplyDelete, t])
 
   useEffect(() => {
     document.addEventListener('visibilitychange', handleSyncWorkflowDraftWhenPageClose)
@@ -477,42 +287,8 @@ export const Workflow: FC<WorkflowProps> = memo(({
           elementY: e.clientY - containerClientRect.top,
         },
       })
-      const target = e.target as HTMLElement
-      const onPane = !!target?.closest('.react-flow__pane')
-      setIsMouseOverCanvas(onPane)
     }
   })
-
-  // Prevent browser zoom interactions from hijacking gestures meant for the workflow canvas
-  useEffect(() => {
-    const preventBrowserZoom = (event: WheelEvent) => {
-      if (!isCommentPreviewHovering && !isCommentInputActive)
-        return
-
-      if (event.ctrlKey || event.metaKey)
-        event.preventDefault()
-    }
-
-    const preventGestureZoom = (event: Event) => {
-      if (!isCommentPreviewHovering && !isCommentInputActive)
-        return
-
-      event.preventDefault()
-    }
-
-    window.addEventListener('wheel', preventBrowserZoom, { passive: false })
-    const gestureEvents: Array<'gesturestart' | 'gesturechange' | 'gestureend'> = ['gesturestart', 'gesturechange', 'gestureend']
-    gestureEvents.forEach((eventName) => {
-      window.addEventListener(eventName, preventGestureZoom, { passive: false })
-    })
-
-    return () => {
-      window.removeEventListener('wheel', preventBrowserZoom)
-      gestureEvents.forEach((eventName) => {
-        window.removeEventListener(eventName, preventGestureZoom)
-      })
-    }
-  }, [isCommentPreviewHovering, isCommentInputActive])
 
   const {
     handleNodeDragStart,
@@ -532,6 +308,7 @@ export const Workflow: FC<WorkflowProps> = memo(({
     handleEdgeEnter,
     handleEdgeLeave,
     handleEdgesChange,
+    handleEdgeContextMenu,
   } = useEdgesInteractions()
   const {
     handleSelectionStart,
@@ -552,12 +329,9 @@ export const Workflow: FC<WorkflowProps> = memo(({
     },
   })
 
-  const isSubGraph = interactionMode === 'subgraph'
-  useShortcuts(!isSubGraph)
+  useShortcuts()
   // Initialize workflow node search functionality
   useWorkflowSearch()
-
-  useLeaderRestoreListener()
 
   // Set up scroll to node event listener using the utility function
   useEffect(() => {
@@ -573,7 +347,6 @@ export const Workflow: FC<WorkflowProps> = memo(({
   const dataSourceList = useStore(s => s.dataSourceList)
   // buildInTools, customTools, workflowTools, mcpTools, dataSourceList
   const configsMap = useHooksStore(s => s.configsMap)
-  const subGraphSelectableNodeTypes = useHooksStore(s => s.subGraphSelectableNodeTypes)
   const [isLoadedVars, setIsLoadedVars] = useState(false)
   const [vars, setVars] = useState<VarInInspect[]>([])
   useEffect(() => {
@@ -610,164 +383,85 @@ export const Workflow: FC<WorkflowProps> = memo(({
     }
   }
 
-  const handleNodeClickInMode = useCallback<NodeMouseHandler>(
-    (event, node) => {
-      if (isSubGraph) {
-        const allowTypes = subGraphSelectableNodeTypes?.length
-          ? subGraphSelectableNodeTypes
-          : [BlockEnum.LLM]
-        if (!allowTypes.includes(node.data.type))
-          return
-      }
-
-      handleNodeClick(event, node)
-    },
-    [handleNodeClick, isSubGraph, subGraphSelectableNodeTypes],
-  )
-
   return (
     <div
       id="workflow-container"
       className={cn(
-        'relative h-full w-full min-w-[960px] overflow-hidden',
+        'relative h-full w-full min-w-[960px]',
         workflowReadOnly && 'workflow-panel-animation',
         nodeAnimation && 'workflow-node-animation',
       )}
       ref={workflowContainerRef}
     >
       <SyncingDataModal />
-      {!isSubGraph && <CandidateNode />}
-      <CommentManager />
+      <CandidateNode />
       <div
-        className="pointer-events-none absolute left-0 top-0 z-[60] flex w-12 items-center justify-center p-1 pl-2"
+        className="pointer-events-none absolute left-0 top-0 z-10 flex w-12 items-center justify-center p-1 pl-2"
         style={{ height: controlHeight }}
       >
-        {!isSubGraph && <Control />}
+        <Control />
       </div>
       <Operator handleRedo={handleHistoryForward} handleUndo={handleHistoryBack} />
-      {!isSubGraph && <PanelContextmenu />}
-      {!isSubGraph && <NodeContextmenu />}
-      {!isSubGraph && <SelectionContextmenu />}
-      {!isSubGraph && <HelpLine />}
-      {!!showConfirm && (
-        <Confirm
-          isShow
-          onCancel={() => setShowConfirm(undefined)}
-          onConfirm={showConfirm.onConfirm}
-          title={showConfirm.title}
-          content={showConfirm.desc}
-        />
-      )}
-      {controlMode === ControlMode.Comment && isMouseOverCanvas && (
-        <CommentCursor />
-      )}
-      <CommentPlacementPreview
-        onSubmit={handleCommentSubmit}
-        onCancel={handleCommentPlacementCancel}
-      />
-      {pendingComment && (
-        <CommentInput
-          position={{
-            x: pendingComment.elementX,
-            y: pendingComment.elementY,
-          }}
-          onSubmit={handleCommentSubmit}
-          onCancel={handleCommentCancel}
-          onPositionChange={handlePendingCommentPositionChange}
-        />
-      )}
-      {visibleComments.map((comment, index) => {
-        const isActive = activeComment?.id === comment.id
-
-        if (isActive && activeComment) {
-          const canGoPrev = index > 0
-          const canGoNext = index < visibleComments.length - 1
-          return (
-            <Fragment key={comment.id}>
-              <CommentIcon
-                key={`${comment.id}-icon`}
-                comment={comment}
-                onClick={() => handleCommentIconClick(comment)}
-                isActive={true}
-                onPositionUpdate={position => handleCommentPositionUpdate(comment.id, position)}
-              />
-              <CommentThread
-                key={`${comment.id}-thread`}
-                comment={activeComment}
-                loading={activeCommentLoading}
-                replySubmitting={replySubmitting}
-                replyUpdating={replyUpdating}
-                onClose={handleActiveCommentClose}
-                onResolve={() => handleCommentResolve(comment.id)}
-                onDelete={() => handleCommentDeleteClick(comment.id)}
-                onPrev={canGoPrev ? () => handleVisibleCommentNavigate('prev') : undefined}
-                onNext={canGoNext ? () => handleVisibleCommentNavigate('next') : undefined}
-                onReply={(content, ids) => handleCommentReply(comment.id, content, ids ?? [])}
-                onReplyEdit={(replyId, content, ids) => handleCommentReplyUpdate(comment.id, replyId, content, ids ?? [])}
-                onReplyDelete={replyId => handleCommentReplyDeleteClick(comment.id, replyId)}
-                onReplyDeleteDirect={replyId => handleCommentReplyDelete(comment.id, replyId)}
-                canGoPrev={canGoPrev}
-                canGoNext={canGoNext}
-              />
-            </Fragment>
-          )
-        }
-
-        return (showUserComments || controlMode === ControlMode.Comment)
-          ? (
-              <CommentIcon
-                key={comment.id}
-                comment={comment}
-                onClick={() => handleCommentIconClick(comment)}
-                onPositionUpdate={position => handleCommentPositionUpdate(comment.id, position)}
-              />
-            )
-          : null
-      })}
+      <PanelContextmenu />
+      <NodeContextmenu />
+      <EdgeContextmenu />
+      <SelectionContextmenu />
+      <HelpLine />
+      {
+        !!showConfirm && (
+          <Confirm
+            isShow
+            onCancel={() => setShowConfirm(undefined)}
+            onConfirm={showConfirm.onConfirm}
+            title={showConfirm.title}
+            content={showConfirm.desc}
+          />
+        )
+      }
       {children}
       <ReactFlow
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodes={nodes}
         edges={edges}
-        className={controlMode === ControlMode.Comment ? 'comment-mode-flow' : ''}
         onNodeDragStart={handleNodeDragStart}
         onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
         onNodeMouseEnter={handleNodeEnter}
         onNodeMouseLeave={handleNodeLeave}
-        onNodeClick={handleNodeClickInMode}
-        onNodeContextMenu={isSubGraph ? undefined : handleNodeContextMenu}
-        onConnect={isSubGraph ? undefined : handleNodeConnect}
-        onConnectStart={isSubGraph ? undefined : handleNodeConnectStart}
-        onConnectEnd={isSubGraph ? undefined : handleNodeConnectEnd}
+        onNodeClick={handleNodeClick}
+        onNodeContextMenu={handleNodeContextMenu}
+        onConnect={handleNodeConnect}
+        onConnectStart={handleNodeConnectStart}
+        onConnectEnd={handleNodeConnectEnd}
         onEdgeMouseEnter={handleEdgeEnter}
         onEdgeMouseLeave={handleEdgeLeave}
         onEdgesChange={handleEdgesChange}
-        onSelectionStart={isSubGraph ? undefined : handleSelectionStart}
-        onSelectionChange={isSubGraph ? undefined : handleSelectionChange}
-        onSelectionDrag={isSubGraph ? undefined : handleSelectionDrag}
-        onPaneContextMenu={isSubGraph ? undefined : handlePaneContextMenu}
-        onSelectionContextMenu={isSubGraph ? undefined : handleSelectionContextMenu}
+        onEdgeContextMenu={handleEdgeContextMenu}
+        onSelectionStart={handleSelectionStart}
+        onSelectionChange={handleSelectionChange}
+        onSelectionDrag={handleSelectionDrag}
+        onPaneContextMenu={handlePaneContextMenu}
+        onSelectionContextMenu={handleSelectionContextMenu}
         connectionLineComponent={CustomConnectionLine}
         // NOTE: For LOOP node, how to distinguish between ITERATION and LOOP here? Maybe both are the same?
         connectionLineContainerStyle={{ zIndex: ITERATION_CHILDREN_Z_INDEX }}
         defaultViewport={viewport}
         multiSelectionKeyCode={null}
         deleteKeyCode={null}
-        nodesDraggable={!(nodesReadOnly || canvasReadOnly || isSubGraph) && controlMode !== ControlMode.Comment}
-        nodesConnectable={!(nodesReadOnly || canvasReadOnly || isSubGraph)}
-        nodesFocusable={allowSelectionWhenReadOnly ? true : !nodesReadOnly}
-        edgesFocusable={isSubGraph ? false : (allowSelectionWhenReadOnly ? true : !nodesReadOnly)}
-        panOnScroll={!isSubGraph && controlMode === ControlMode.Pointer && !workflowReadOnly}
-        panOnDrag={!isSubGraph && (controlMode === ControlMode.Hand || [1])}
-        selectionOnDrag={!isSubGraph && controlMode === ControlMode.Pointer && !workflowReadOnly && !canvasReadOnly}
-        zoomOnPinch={!isSubGraph}
-        zoomOnScroll={!isSubGraph}
-        zoomOnDoubleClick={!isSubGraph}
+        nodesDraggable={!nodesReadOnly}
+        nodesConnectable={!nodesReadOnly}
+        nodesFocusable={!nodesReadOnly}
+        edgesFocusable={!nodesReadOnly}
+        panOnScroll={controlMode === ControlMode.Pointer && !workflowReadOnly}
+        panOnDrag={controlMode === ControlMode.Hand || [1]}
+        zoomOnPinch={true}
+        zoomOnScroll={true}
+        zoomOnDoubleClick={true}
         isValidConnection={isValidConnection}
         selectionKeyCode={null}
         selectionMode={SelectionMode.Partial}
+        selectionOnDrag={controlMode === ControlMode.Pointer && !workflowReadOnly}
         minZoom={0.25}
       >
         <Background
@@ -776,13 +470,6 @@ export const Workflow: FC<WorkflowProps> = memo(({
           className="bg-workflow-canvas-workflow-bg"
           color="var(--color-workflow-canvas-workflow-dot-color)"
         />
-        {showUserCursors && cursors && (
-          <UserCursors
-            cursors={cursors}
-            myUserId={myUserId || null}
-            onlineUsers={onlineUsers || []}
-          />
-        )}
       </ReactFlow>
     </div>
   )
@@ -790,25 +477,14 @@ export const Workflow: FC<WorkflowProps> = memo(({
 
 type WorkflowWithInnerContextProps = WorkflowProps & {
   hooksStore?: Partial<HooksStoreShape>
-  cursors?: Record<string, CursorPosition>
-  myUserId?: string | null
-  onlineUsers?: OnlineUser[]
 }
 export const WorkflowWithInnerContext = memo(({
   hooksStore,
-  cursors,
-  myUserId,
-  onlineUsers,
   ...restProps
 }: WorkflowWithInnerContextProps) => {
   return (
     <HooksStoreContextProvider {...hooksStore}>
-      <Workflow
-        {...restProps}
-        cursors={cursors}
-        myUserId={myUserId}
-        onlineUsers={onlineUsers}
-      />
+      <Workflow {...restProps} />
     </HooksStoreContextProvider>
   )
 })
