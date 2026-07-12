@@ -5,8 +5,9 @@ import type {
   NodePanelPresenceMap,
   OnlineUser,
 } from '../types/collaboration'
+import { useSuspenseQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { useGlobalPublicStore } from '@/context/global-public-context'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
 import { collaborationManager } from '../core/collaboration-manager'
 import { CursorService } from '../services/cursor-service'
 
@@ -33,7 +34,10 @@ export function useCollaboration(appId: string, reactFlowStore?: ReactFlowStore)
 
   const cursorServiceRef = useRef<CursorService | null>(null)
   const lastDisconnectReasonRef = useRef<string | null>(null)
-  const isCollaborationEnabled = useGlobalPublicStore(s => s.systemFeatures.enable_collaboration_mode)
+  const { data: isCollaborationEnabled } = useSuspenseQuery({
+    ...systemFeaturesQueryOptions(),
+    select: s => s.enable_collaboration_mode,
+  })
 
   useEffect(() => {
     if (!appId || !isCollaborationEnabled) {
@@ -51,7 +55,7 @@ export function useCollaboration(appId: string, reactFlowStore?: ReactFlowStore)
 
     const initCollaboration = async () => {
       try {
-        const id = await collaborationManager.connect(appId)
+        const id = await collaborationManager.connect(appId, reactFlowStore)
         if (isUnmounted) {
           collaborationManager.disconnect(id)
           return
@@ -67,9 +71,8 @@ export function useCollaboration(appId: string, reactFlowStore?: ReactFlowStore)
     initCollaboration()
 
     const unsubscribeStateChange = collaborationManager.onStateChange((newState: Partial<CollaborationState>) => {
-      if (newState.isConnected === false) {
+      if (newState.isConnected === false)
         lastDisconnectReasonRef.current = newState.disconnectReason || newState.error || null
-      }
       if (newState.isConnected === true)
         lastDisconnectReasonRef.current = null
 
@@ -106,17 +109,7 @@ export function useCollaboration(appId: string, reactFlowStore?: ReactFlowStore)
       if (connectionId)
         collaborationManager.disconnect(connectionId)
     }
-  }, [appId, isCollaborationEnabled])
-
-  useEffect(() => {
-    if (!reactFlowStore)
-      return
-
-    collaborationManager.setReactFlowStore(reactFlowStore)
-    return () => {
-      collaborationManager.setReactFlowStore(null)
-    }
-  }, [reactFlowStore])
+  }, [appId, reactFlowStore, isCollaborationEnabled])
 
   const prevIsConnected = useRef(false)
   useEffect(() => {

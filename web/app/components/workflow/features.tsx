@@ -7,7 +7,6 @@ import {
   useCallback,
 } from 'react'
 import { useNodes } from 'reactflow'
-import { useStore as useAppStore } from '@/app/components/app/store'
 import { useFeaturesStore } from '@/app/components/base/features/hooks'
 import NewFeaturePanel from '@/app/components/base/features/new-feature-panel'
 import { webSocketClient } from '@/app/components/workflow/collaboration/core/websocket-manager'
@@ -15,7 +14,6 @@ import { updateFeatures } from '@/service/workflow'
 import {
   useIsChatMode,
   useNodesReadOnly,
-  useNodesSyncDraft,
 } from './hooks'
 import useConfig from './nodes/start/use-config'
 import { useStore } from './store'
@@ -24,10 +22,8 @@ import { InputVarType } from './types'
 const Features = () => {
   const setShowFeaturesPanel = useStore(s => s.setShowFeaturesPanel)
   const appId = useStore(s => s.appId)
-  const isSandboxRuntime = useAppStore(s => s.appDetail?.runtime_type === 'sandboxed')
   const isChatMode = useIsChatMode()
   const { nodesReadOnly } = useNodesReadOnly()
-  const { handleSyncWorkflowDraft } = useNodesSyncDraft()
   const featuresStore = useFeaturesStore()
   const nodes = useNodes<CommonNodeType>()
   const startNode = nodes.find(node => node.data.type === 'start')
@@ -37,11 +33,11 @@ const Features = () => {
   const handleAddOpeningStatementVariable = (variables: PromptVariable[]) => {
     const newVariable = variables[0]
     const startNodeVariable: InputVar = {
-      variable: newVariable.key,
-      label: newVariable.name,
+      variable: newVariable!.key,
+      label: newVariable!.name,
       type: InputVarType.textInput,
-      max_length: newVariable.max_length,
-      required: newVariable.required || false,
+      max_length: newVariable!.max_length,
+      required: newVariable!.required || false,
       options: [],
     }
     handleAddVariable(startNodeVariable)
@@ -53,7 +49,6 @@ const Features = () => {
 
     try {
       const currentFeatures = featuresStore.getState().features
-      const shouldSyncDraft = isSandboxRuntime || currentFeatures.sandbox?.enabled === true
 
       // Transform features to match the expected server format (same as doSyncWorkflowDraft)
       const transformedFeatures: WorkflowDraftFeaturesPayload = {
@@ -65,16 +60,12 @@ const Features = () => {
         retriever_resource: currentFeatures.citation,
         sensitive_word_avoidance: currentFeatures.moderation,
         file_upload: currentFeatures.file,
-        sandbox: currentFeatures.sandbox,
       }
 
       await updateFeatures({
         appId,
         features: transformedFeatures,
       })
-
-      if (shouldSyncDraft)
-        handleSyncWorkflowDraft(true, true)
 
       // Emit update event to other connected clients
       const socket = webSocketClient.getSocket(appId)
@@ -89,7 +80,7 @@ const Features = () => {
     }
 
     setShowFeaturesPanel(true)
-  }, [appId, featuresStore, handleSyncWorkflowDraft, isSandboxRuntime, setShowFeaturesPanel])
+  }, [appId, featuresStore, setShowFeaturesPanel])
 
   return (
     <NewFeaturePanel

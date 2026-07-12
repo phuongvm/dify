@@ -1,20 +1,20 @@
 import type {
   CommonNodeType,
 } from '@/app/components/workflow/types'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
 import {
   memo,
   useCallback,
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import Button from '@/app/components/base/button'
 import BlockIcon from '@/app/components/workflow/block-icon'
 import {
   useNodesInteractions,
   useNodesReadOnly,
   useToolIcon,
 } from '@/app/components/workflow/hooks'
-import { cn } from '@/utils/classnames'
 import Operator from './operator'
 
 type ItemProps = {
@@ -42,12 +42,12 @@ const Item = ({
       className="group relative flex h-9 cursor-pointer items-center rounded-lg border-[0.5px] border-divider-regular bg-background-default px-2 text-xs text-text-secondary shadow-xs last-of-type:mb-0 hover:bg-background-default-hover"
     >
       <BlockIcon
-        type={data._iconTypeOverride ?? data.type}
+        type={data.type}
         toolIcon={toolIcon}
         className="mr-1.5 shrink-0"
       />
       <div
-        className="grow truncate text-text-secondary system-xs-medium"
+        className="grow truncate system-xs-medium text-text-secondary"
         title={data.title}
       >
         {data.title}

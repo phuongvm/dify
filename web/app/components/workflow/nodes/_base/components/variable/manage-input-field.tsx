@@ -16,17 +16,17 @@ const ManageInputField = ({
         className="flex h-8 grow cursor-pointer items-center px-3"
         onClick={onManage}
       >
-        <RiAddLine className="mr-1 h-4 w-4 text-text-tertiary" />
+        <RiAddLine className="mr-1 size-4 text-text-tertiary" />
         <div
-          className="truncate text-text-tertiary system-xs-medium"
+          className="truncate system-xs-medium text-text-tertiary"
           title="Create user input field"
         >
           {t('inputField.create', { ns: 'pipeline' })}
         </div>
       </div>
-      <div className="mx-1 h-3 w-[1px] shrink-0 bg-divider-regular"></div>
+      <div className="mx-1 h-3 w-px shrink-0 bg-divider-regular"></div>
       <div
-        className="flex h-8 shrink-0 cursor-pointer items-center justify-center px-3 text-text-tertiary system-xs-medium"
+        className="flex h-8 shrink-0 cursor-pointer items-center justify-center px-3 system-xs-medium text-text-tertiary"
         onClick={onManage}
       >
         {t('inputField.manage', { ns: 'pipeline' })}

@@ -1,4 +1,3 @@
-/* eslint-disable ts/no-explicit-any */
 import type {
   Edge as ReactFlowEdge,
   Node as ReactFlowNode,
@@ -7,7 +6,7 @@ import type {
 } from 'reactflow'
 import type { Plugin, PluginMeta } from '@/app/components/plugins/types'
 import type { Collection, Tool } from '@/app/components/tools/types'
-import type { BlockClassificationEnum, PluginDefaultValue } from '@/app/components/workflow/block-selector/types'
+import type { BlockClassificationEnum, BlockDefaultValue, PluginDefaultValue } from '@/app/components/workflow/block-selector/types'
 import type {
   DefaultValueForm,
   ErrorHandleTypeEnum,
@@ -28,6 +27,7 @@ import type {
 
 export enum BlockEnum {
   Start = 'start',
+  StartPlaceholder = 'start-placeholder',
   End = 'end',
   Answer = 'answer',
   LLM = 'llm',
@@ -37,7 +37,6 @@ export enum BlockEnum {
   Code = 'code',
   TemplateTransform = 'template-transform',
   HttpRequest = 'http-request',
-  Group = 'group',
   VariableAssigner = 'variable-assigner',
   VariableAggregator = 'variable-aggregator',
   Tool = 'tool',
@@ -48,6 +47,7 @@ export enum BlockEnum {
   IterationStart = 'iteration-start',
   Assigner = 'assigner', // is now named as VariableAssigner
   Agent = 'agent',
+  AgentV2 = 'agent-v2',
   Loop = 'loop',
   LoopStart = 'loop-start',
   LoopEnd = 'loop-end',
@@ -58,8 +58,6 @@ export enum BlockEnum {
   TriggerSchedule = 'trigger-schedule',
   TriggerWebhook = 'trigger-webhook',
   TriggerPlugin = 'trigger-plugin',
-  Command = 'command',
-  FileUpload = 'file-upload',
 }
 
 export enum ControlMode {
@@ -88,19 +86,16 @@ export type CommonNodeType<T = {}> = {
   _isCandidate?: boolean
   _isBundled?: boolean
   _children?: { nodeId: string, nodeType: BlockEnum }[]
-  parent_node_id?: string
   _isEntering?: boolean
   _showAddVariablePopup?: boolean
   _holdAddVariablePopup?: boolean
-  _hiddenInGroupId?: string
   _iterationLength?: number
   _iterationIndex?: number
   _waitingRun?: boolean
   _retryIndex?: number
   _dataSourceStartToAdd?: boolean
   _isTempNode?: boolean
-  _subGraphEntry?: boolean
-  _iconTypeOverride?: BlockEnum
+  _openInlineAgentPanel?: boolean
   isInIteration?: boolean
   iteration_id?: string
   selected?: boolean
@@ -128,7 +123,6 @@ export type CommonEdgeType = {
   _connectedNodeIsHovering?: boolean
   _connectedNodeIsSelected?: boolean
   _isBundled?: boolean
-  _hiddenInGroupId?: string
   _sourceRunningStatus?: NodeRunningStatus
   _targetRunningStatus?: NodeRunningStatus
   _waitingRun?: boolean
@@ -142,7 +136,6 @@ export type CommonEdgeType = {
 }
 
 export type Node<T = {}> = ReactFlowNode<CommonNodeType<T>>
-export type SelectedNode = Pick<Node, 'id' | 'data'>
 export type NodeProps<T = unknown> = { id: string, data: CommonNodeType<T> }
 export type NodePanelProps<T> = {
   id: string
@@ -197,11 +190,6 @@ export type GlobalVariable = {
   description: string
 }
 
-export type VariableWithValue = {
-  key: string
-  value: string
-}
-
 export enum InputVarType {
   textInput = 'text-input',
   paragraph = 'paragraph',
@@ -229,7 +217,7 @@ export type InputVar = {
   }
   variable: string
   max_length?: number
-  default?: string | number
+  default?: string | number | boolean
   required: boolean
   hint?: string
   options?: string[]
@@ -266,21 +254,6 @@ export type PromptItem = {
   text: string
   edition_type?: EditionType
   jinja2_text?: string
-  skill?: boolean
-  metadata?: Record<string, any>
-}
-
-export type PromptMessageContext = {
-  id?: string
-  $context: ValueSelector
-  skill?: boolean
-  metadata?: Record<string, any>
-}
-
-export type PromptTemplateItem = PromptItem | PromptMessageContext
-
-export const isPromptMessageContext = (item: PromptTemplateItem): item is PromptMessageContext => {
-  return '$context' in item
 }
 
 export enum MemoryRole {
@@ -316,7 +289,6 @@ export enum VarType {
   arrayObject = 'array[object]',
   arrayBoolean = 'array[boolean]',
   arrayFile = 'array[file]',
-  arrayMessage = 'array[message]',
   any = 'any',
   arrayAny = 'array[any]',
 }
@@ -326,16 +298,10 @@ export enum ValueType {
   constant = 'constant',
 }
 
-export type VarSchemaContainer = {
-  schema?: StructuredOutput['schema'] | Record<string, unknown> | string
-}
-
-export type VarChildren = Var[] | StructuredOutput | VarSchemaContainer
-
 export type Var = {
   variable: string
   type: VarType
-  children?: VarChildren // if type is obj, has the children struct
+  children?: Var[] | StructuredOutput // if type is obj, has the children struct
   isParagraph?: boolean
   isSelect?: boolean
   options?: string[]
@@ -355,32 +321,13 @@ export type NodeOutPutVar = {
   isStartNode?: boolean
   isLoop?: boolean
   isFlat?: boolean
-  nodeType?: BlockEnum
 }
 
-// allow node default validators with narrower payload types to be stored in shared collections.
-type CheckValidFn<T> = {
-  bivarianceHack: (payload: T, t: any, moreDataForCheckValid?: any) => { isValid: boolean, errorMessage?: string }
-}['bivarianceHack']
-
-// allow node output var generators with narrower payload types to be stored in shared collections.
-type GetOutputVarsFn<T> = {
-  bivarianceHack: (
-    payload: T,
-    allPluginInfoList: Record<string, ToolWithProvider[]>,
-    ragVariables?: Var[],
-    utils?: {
-      schemaTypeDefinitions?: SchemaTypeDefinition[]
-    },
-  ) => Var[]
-}['bivarianceHack']
-
-export type NodeDefaultBase = {
+export type NodeDefault<T = {}> = {
   metaData: {
     classification: BlockClassificationEnum
     sort: number
     type: BlockEnum
-    iconType?: BlockEnum
     title: string
     author: string
     description?: string
@@ -391,19 +338,15 @@ export type NodeDefaultBase = {
     isSingleton?: boolean
     isTypeFixed?: boolean
   }
-  defaultValue: Partial<CommonNodeType>
-  defaultRunInputData?: Record<string, any>
-  checkValid: CheckValidFn<CommonNodeType>
-  getOutputVars?: GetOutputVarsFn<CommonNodeType>
-}
-
-export type NodeDefault<T extends CommonNodeType = CommonNodeType> = Omit<NodeDefaultBase, 'defaultValue' | 'checkValid' | 'getOutputVars'> & {
   defaultValue: Partial<T>
-  checkValid: CheckValidFn<T>
-  getOutputVars?: GetOutputVarsFn<T>
+  defaultRunInputData?: Record<string, any>
+  checkValid: (payload: T, t: any, moreDataForCheckValid?: any) => { isValid: boolean, errorMessage?: string }
+  getOutputVars?: (payload: T, allPluginInfoList: Record<string, ToolWithProvider[]>, ragVariables?: Var[], utils?: {
+    schemaTypeDefinitions?: SchemaTypeDefinition[]
+  }) => Var[]
 }
 
-export type OnSelectBlock = (type: BlockEnum, pluginDefaultValue?: PluginDefaultValue) => void
+export type OnSelectBlock = (type: BlockEnum, defaultValue?: BlockDefaultValue) => void
 
 export enum WorkflowRunningStatus {
   Waiting = 'waiting',
@@ -437,7 +380,7 @@ export type OnNodeAdd = (
     nodeType: BlockEnum
     sourceHandle?: string
     targetHandle?: string
-    pluginDefaultValue?: PluginDefaultValue
+    pluginDefaultValue?: BlockDefaultValue
   },
   oldNodesPayload: {
     prevNodeId?: string
@@ -446,11 +389,6 @@ export type OnNodeAdd = (
     nextNodeTargetHandle?: string
   },
 ) => void
-
-export type CheckValidRes = {
-  isValid: boolean
-  errorMessage?: string
-}
 
 export type RunFile = {
   type: string
@@ -480,11 +418,7 @@ export type WorkflowRunningData = {
     elapsed_time?: number
     total_tokens?: number
     created_at?: number
-    created_by?: {
-      id: string
-      name: string
-      email: string
-    }
+    created_by?: string
     finished_at?: number
     steps?: number
     showSteps?: boolean
@@ -567,7 +501,7 @@ export type ChildNodeTypeCount = {
   [key: string]: number
 }
 
-export const TRIGGER_NODE_TYPES = [
+const TRIGGER_NODE_TYPES = [
   BlockEnum.TriggerSchedule,
   BlockEnum.TriggerWebhook,
   BlockEnum.TriggerPlugin,
@@ -585,9 +519,4 @@ export type Block = {
   type: BlockEnum
   title: string
   description?: string
-}
-
-export enum ViewType {
-  graph = 'graph',
-  skill = 'skill',
 }

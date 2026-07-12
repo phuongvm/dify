@@ -5,16 +5,15 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.orm import sessionmaker
 
-from dify_graph.entities.graph_config import NodeConfigDict, NodeConfigDictAdapter
-from dify_graph.enums import BuiltinNodeTypes
-from dify_graph.nodes.human_input.entities import (
+from core.workflow.human_input_adapter import (
     EmailDeliveryConfig,
     EmailDeliveryMethod,
     EmailRecipients,
     ExternalRecipient,
-    HumanInputNodeData,
     MemberRecipient,
 )
+from core.workflow.nodes.human_input.entities import HumanInputNodeData
+from graphon.enums import BuiltinNodeTypes
 from services import workflow_service as workflow_service_module
 from services.workflow_service import WorkflowService
 
@@ -23,16 +22,18 @@ def _make_service() -> WorkflowService:
     return WorkflowService(session_maker=sessionmaker())
 
 
-def _build_node_config(delivery_methods: list[EmailDeliveryMethod]) -> NodeConfigDict:
-    node_data = HumanInputNodeData(
-        title="Human Input",
-        delivery_methods=delivery_methods,
-        form_content="Test content",
-        inputs=[],
-        user_actions=[],
-    ).model_dump(mode="json")
-    node_data["type"] = BuiltinNodeTypes.HUMAN_INPUT
-    return NodeConfigDictAdapter.validate_python({"id": "node-1", "data": node_data})
+def _build_node_config(delivery_methods: list[EmailDeliveryMethod]) -> dict[str, object]:
+    return {
+        "id": "node-1",
+        "data": HumanInputNodeData(
+            title="Human Input",
+            type=BuiltinNodeTypes.HUMAN_INPUT,
+            delivery_methods=delivery_methods,
+            form_content="Test content",
+            inputs=[],
+            user_actions=[],
+        ),
+    }
 
 
 def _make_email_method(enabled: bool = True, debug_mode: bool = False) -> EmailDeliveryMethod:
@@ -41,7 +42,7 @@ def _make_email_method(enabled: bool = True, debug_mode: bool = False) -> EmailD
         enabled=enabled,
         config=EmailDeliveryConfig(
             recipients=EmailRecipients(
-                whole_workspace=False,
+                include_bound_group=False,
                 items=[ExternalRecipient(email="tester@example.com")],
             ),
             subject="Test subject",
@@ -63,6 +64,7 @@ def test_human_input_delivery_requires_draft_workflow():
             account=account,
             node_id="node-1",
             delivery_method_id="delivery-1",
+            session=MagicMock(),
         )
 
 
@@ -75,11 +77,11 @@ def test_human_input_delivery_allows_disabled_method(monkeypatch: pytest.MonkeyP
     service.get_draft_workflow = MagicMock(return_value=workflow)  # type: ignore[method-assign]
     service._build_human_input_variable_pool = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     node_stub = MagicMock()
-    node_stub._render_form_content_before_submission.return_value = "rendered"
-    node_stub._resolve_default_values.return_value = {}
-    service._build_human_input_node = MagicMock(return_value=node_stub)  # type: ignore[attr-defined]
+    node_stub.render_form_content_before_submission.return_value = "rendered"
+    node_stub.resolve_default_values.return_value = {}
+    service._build_human_input_node_for_debugging = MagicMock(return_value=node_stub)  # type: ignore[attr-defined]
     service._create_human_input_delivery_test_form = MagicMock(  # type: ignore[attr-defined]
-        return_value=("form-1", {})
+        return_value=("form-1", [])
     )
 
     test_service_instance = MagicMock()
@@ -97,6 +99,7 @@ def test_human_input_delivery_allows_disabled_method(monkeypatch: pytest.MonkeyP
         account=account,
         node_id="node-1",
         delivery_method_id=str(delivery_method.id),
+        session=MagicMock(),
     )
 
     test_service_instance.send_test.assert_called_once()
@@ -111,11 +114,11 @@ def test_human_input_delivery_dispatches_to_test_service(monkeypatch: pytest.Mon
     service.get_draft_workflow = MagicMock(return_value=workflow)  # type: ignore[method-assign]
     service._build_human_input_variable_pool = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     node_stub = MagicMock()
-    node_stub._render_form_content_before_submission.return_value = "rendered"
-    node_stub._resolve_default_values.return_value = {}
-    service._build_human_input_node = MagicMock(return_value=node_stub)  # type: ignore[attr-defined]
+    node_stub.render_form_content_before_submission.return_value = "rendered"
+    node_stub.resolve_default_values.return_value = {}
+    service._build_human_input_node_for_debugging = MagicMock(return_value=node_stub)  # type: ignore[attr-defined]
     service._create_human_input_delivery_test_form = MagicMock(  # type: ignore[attr-defined]
-        return_value=("form-1", {})
+        return_value=("form-1", [])
     )
 
     test_service_instance = MagicMock()
@@ -134,6 +137,7 @@ def test_human_input_delivery_dispatches_to_test_service(monkeypatch: pytest.Mon
         node_id="node-1",
         delivery_method_id=str(delivery_method.id),
         inputs={"#node-1.output#": "value"},
+        session=MagicMock(),
     )
 
     pool_args = service._build_human_input_variable_pool.call_args.kwargs
@@ -150,11 +154,11 @@ def test_human_input_delivery_debug_mode_overrides_recipients(monkeypatch: pytes
     service.get_draft_workflow = MagicMock(return_value=workflow)  # type: ignore[method-assign]
     service._build_human_input_variable_pool = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     node_stub = MagicMock()
-    node_stub._render_form_content_before_submission.return_value = "rendered"
-    node_stub._resolve_default_values.return_value = {}
-    service._build_human_input_node = MagicMock(return_value=node_stub)  # type: ignore[attr-defined]
+    node_stub.render_form_content_before_submission.return_value = "rendered"
+    node_stub.resolve_default_values.return_value = {}
+    service._build_human_input_node_for_debugging = MagicMock(return_value=node_stub)  # type: ignore[attr-defined]
     service._create_human_input_delivery_test_form = MagicMock(  # type: ignore[attr-defined]
-        return_value=("form-1", {})
+        return_value=("form-1", [])
     )
 
     test_service_instance = MagicMock()
@@ -172,14 +176,15 @@ def test_human_input_delivery_debug_mode_overrides_recipients(monkeypatch: pytes
         account=account,
         node_id="node-1",
         delivery_method_id=str(delivery_method.id),
+        session=MagicMock(),
     )
 
     test_service_instance.send_test.assert_called_once()
     sent_method = test_service_instance.send_test.call_args.kwargs["method"]
     assert isinstance(sent_method, EmailDeliveryMethod)
     assert sent_method.config.debug_mode is True
-    assert sent_method.config.recipients.whole_workspace is False
+    assert sent_method.config.recipients.include_bound_group is False
     assert len(sent_method.config.recipients.items) == 1
     recipient = sent_method.config.recipients.items[0]
     assert isinstance(recipient, MemberRecipient)
-    assert recipient.user_id == account.id
+    assert recipient.reference_id == account.id

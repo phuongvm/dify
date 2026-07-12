@@ -6,7 +6,7 @@ import type {
   LoopVariableMap,
   NodeTracing,
 } from '@/types/workflow'
-import { AgentResultPanel } from './agent-log'
+import AgentResultPanel from './agent-log/agent-result-panel'
 import { IterationResultPanel } from './iteration-log'
 import { LLMResultPanel } from './llm-log'
 import { LoopResultPanel } from './loop-log'

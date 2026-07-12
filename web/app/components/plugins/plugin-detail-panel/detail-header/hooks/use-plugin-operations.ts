@@ -2,19 +2,20 @@
 
 import type { PluginDetail } from '../../../types'
 import type { ModalStates, VersionTarget } from './use-detail-header-state'
+import { toast } from '@langgenius/dify-ui/toast'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { trackEvent } from '@/app/components/base/amplitude'
-import { toast } from '@/app/components/base/ui/toast'
+import useRefreshPluginList from '@/app/components/plugins/install-plugin/hooks/use-refresh-plugin-list'
 import { useModalContext } from '@/context/modal-context'
-import { useProviderContext } from '@/context/provider-context'
 import { uninstallPlugin } from '@/service/plugins'
 import { useInvalidateCheckInstalled } from '@/service/use-plugins'
-import { useInvalidateAllToolProviders } from '@/service/use-tools'
-import { useGitHubReleases } from '../../../install-plugin/hooks'
-import { PluginCategoryEnum, PluginSource } from '../../../types'
+import { checkForUpdates, fetchReleases } from '../../../install-plugin/hooks'
+import { PluginSource } from '../../../types'
 
 type UsePluginOperationsParams = {
+  canDeletePlugin?: boolean
+  canUpdatePlugin?: boolean
   detail: PluginDetail
   modalStates: ModalStates
   versionPicker: {
@@ -32,6 +33,8 @@ type UsePluginOperationsReturn = {
 }
 
 export const usePluginOperations = ({
+  canDeletePlugin = true,
+  canUpdatePlugin = true,
   detail,
   modalStates,
   versionPicker,
@@ -39,11 +42,9 @@ export const usePluginOperations = ({
   onUpdate,
 }: UsePluginOperationsParams): UsePluginOperationsReturn => {
   const { t } = useTranslation()
-  const { checkForUpdates, fetchReleases } = useGitHubReleases()
   const { setShowUpdatePluginModal } = useModalContext()
-  const { refreshModelProviders } = useProviderContext()
+  const { refreshPluginList } = useRefreshPluginList()
   const invalidateCheckInstalled = useInvalidateCheckInstalled()
-  const invalidateAllToolProviders = useInvalidateAllToolProviders()
 
   const { id, meta, plugin_id } = detail
   const { author, category, name } = detail.declaration || detail
@@ -53,6 +54,9 @@ export const usePluginOperations = ({
   }, [invalidateCheckInstalled, onUpdate])
 
   const handleUpdate = useCallback(async (isDowngrade?: boolean) => {
+    if (!canUpdatePlugin)
+      return
+
     if (isFromMarketplace) {
       versionPicker.setIsDowngrade(!!isDowngrade)
       modalStates.showUpdateModal()
@@ -94,6 +98,7 @@ export const usePluginOperations = ({
       })
     }
   }, [
+    canUpdatePlugin,
     isFromMarketplace,
     meta,
     author,
@@ -113,6 +118,9 @@ export const usePluginOperations = ({
   }, [handlePluginUpdated, modalStates])
 
   const handleDelete = useCallback(async () => {
+    if (!canDeletePlugin)
+      return
+
     modalStates.showDeleting()
     const res = await uninstallPlugin(id)
     modalStates.hideDeleting()
@@ -121,24 +129,19 @@ export const usePluginOperations = ({
       modalStates.hideDeleteConfirm()
       toast.success(t('action.deleteSuccess', { ns: 'plugin' }))
       handlePluginUpdated(true)
-
-      if (PluginCategoryEnum.model.includes(category))
-        refreshModelProviders()
-
-      if (PluginCategoryEnum.tool.includes(category))
-        invalidateAllToolProviders()
+      refreshPluginList({ category })
 
       trackEvent('plugin_uninstalled', { plugin_id, plugin_name: name })
     }
   }, [
+    canDeletePlugin,
     id,
     category,
     plugin_id,
     name,
     modalStates,
     handlePluginUpdated,
-    refreshModelProviders,
-    invalidateAllToolProviders,
+    refreshPluginList,
   ])
 
   return {

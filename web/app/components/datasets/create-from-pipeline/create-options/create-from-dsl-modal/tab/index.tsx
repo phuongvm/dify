@@ -26,7 +26,7 @@ const Tab = ({
   ]
 
   return (
-    <div className="flex h-9 items-center gap-x-6 border-b border-divider-subtle px-6 text-text-tertiary system-md-semibold">
+    <div className="flex h-9 items-center gap-x-6 border-b border-divider-subtle px-6 system-md-semibold text-text-tertiary">
       {
         tabs.map(tab => (
           <Item

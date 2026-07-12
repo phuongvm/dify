@@ -2,13 +2,13 @@ import type { Mock } from 'vitest'
 import type { UsagePlanInfo } from '../../type'
 import { fireEvent, render, screen } from '@testing-library/react'
 import * as React from 'react'
-import { useAppContext } from '@/context/app-context'
 import { useGetPricingPageLanguage } from '@/context/i18n'
 import { useProviderContext } from '@/context/provider-context'
 import { Plan } from '../../type'
 import Pricing from '../index'
 
 let mockLanguage: string | null = 'en'
+let mockAppCtx: Record<string, unknown> = {}
 
 vi.mock('../plans/self-hosted-plan-item/list', () => ({
   default: ({ plan }: { plan: string }) => (
@@ -27,9 +27,31 @@ vi.mock('@/next/link', () => ({
   ),
 }))
 
-vi.mock('@/context/app-context', () => ({
-  useAppContext: vi.fn(),
-}))
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppCtx)
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppCtx)
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppCtx)
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppCtx)
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppCtx)
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
 
 vi.mock('@/context/provider-context', () => ({
   useProviderContext: vi.fn(),
@@ -53,13 +75,18 @@ describe('Pricing', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockLanguage = 'en'
-    ;(useAppContext as Mock).mockReturnValue({ isCurrentWorkspaceManager: true })
+    mockAppCtx = {
+      isCurrentWorkspaceManager: true,
+      workspacePermissionKeys: ['billing.manage'],
+    }
     ;(useProviderContext as Mock).mockReturnValue({
       plan: {
         type: Plan.sandbox,
         usage: buildUsage(),
         total: buildUsage(),
       },
+      enableEducationPlan: false,
+      isEducationAccount: false,
     })
     ;(useGetPricingPageLanguage as Mock).mockImplementation(() => mockLanguage)
   })
@@ -71,6 +98,46 @@ describe('Pricing', () => {
       expect(screen.getByRole('dialog', { name: 'billing.plansCommon.title.plans' })).toBeInTheDocument()
       expect(screen.getByText('billing.plansCommon.title.plans')).toBeInTheDocument()
       expect(screen.getByTestId('pricing-link')).toHaveAttribute('href', 'https://dify.ai/en/pricing#plans-and-features')
+    })
+
+    it('should default to yearly billing for education accounts', () => {
+      mockAppCtx = {
+        isCurrentWorkspaceManager: false,
+        workspacePermissionKeys: ['billing.manage'],
+      }
+      ;(useProviderContext as Mock).mockReturnValue({
+        plan: {
+          type: Plan.sandbox,
+          usage: buildUsage(),
+          total: buildUsage(),
+        },
+        enableEducationPlan: true,
+        isEducationAccount: true,
+      })
+
+      render(<Pricing onCancel={vi.fn()} />)
+
+      expect(screen.getByRole('switch')).toBeChecked()
+    })
+
+    it('should not default to yearly billing when billing manage permission is missing', () => {
+      mockAppCtx = {
+        isCurrentWorkspaceManager: true,
+        workspacePermissionKeys: [],
+      }
+      ;(useProviderContext as Mock).mockReturnValue({
+        plan: {
+          type: Plan.sandbox,
+          usage: buildUsage(),
+          total: buildUsage(),
+        },
+        enableEducationPlan: true,
+        isEducationAccount: true,
+      })
+
+      render(<Pricing onCancel={vi.fn()} />)
+
+      expect(screen.getByRole('switch')).not.toBeChecked()
     })
   })
 

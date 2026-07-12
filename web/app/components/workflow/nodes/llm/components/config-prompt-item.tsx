@@ -1,21 +1,19 @@
 'use client'
 import type { FC } from 'react'
-import type { ModelConfig, PromptItem, Variable } from '../../../types'
+import type { ModelConfig, Node, NodeOutPutVar, PromptItem, Variable } from '../../../types'
 import * as React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import Tooltip from '@/app/components/base/tooltip'
+import { Infotip } from '@/app/components/base/infotip'
 import Editor from '@/app/components/workflow/nodes/_base/components/prompt/editor'
 import TypeSelector from '@/app/components/workflow/nodes/_base/components/selector'
-import { extractToolConfigIds } from '@/app/components/workflow/utils'
 import { PromptRole } from '@/models/debug'
 import { useWorkflowStore } from '../../../store'
 import { EditionType } from '../../../types'
-import ComputerUseTip from './computer-use-tip'
 
 const i18nPrefix = 'nodes.llm'
 
-type Props = {
+type Props = Readonly<{
   instanceId: string
   className?: string
   headerClassName?: string
@@ -29,7 +27,6 @@ type Props = {
   payload: PromptItem
   handleChatModeMessageRoleChange: (role: PromptRole) => void
   onPromptChange: (p: string) => void
-  onMetadataChange: (metadata: Record<string, unknown>) => void
   onEditionTypeChange: (editionType: EditionType) => void
   onRemove: () => void
   isShowContext: boolean
@@ -38,17 +35,12 @@ type Props = {
     history: boolean
     query: boolean
   }
-  availableVars: any
-  availableNodes: any
+  availableVars: NodeOutPutVar[]
+  availableNodes: Node[]
   varList: Variable[]
-  handleAddVariable: (payload: any) => void
+  handleAddVariable: (payload: Variable) => void
   modelConfig?: ModelConfig
-  isSupportSandbox?: boolean
-  onPromptEditorBlur?: () => void
-  disableToolBlocks?: boolean
-  showComputerUseTip?: boolean
-  onEnableComputerUse?: () => void
-}
+}>
 
 const roleOptions = [
   {
@@ -81,7 +73,6 @@ const ConfigPromptItem: FC<Props> = ({
   isChatApp,
   payload,
   onPromptChange,
-  onMetadataChange,
   onEditionTypeChange,
   onRemove,
   isShowContext,
@@ -91,11 +82,6 @@ const ConfigPromptItem: FC<Props> = ({
   varList,
   handleAddVariable,
   modelConfig,
-  isSupportSandbox,
-  onPromptEditorBlur,
-  disableToolBlocks,
-  showComputerUseTip,
-  onEnableComputerUse,
 }) => {
   const { t } = useTranslation()
   const workflowStore = useWorkflowStore()
@@ -107,11 +93,6 @@ const ConfigPromptItem: FC<Props> = ({
     onPromptChange(prompt)
     setTimeout(() => setControlPromptEditorRerenderKey(Date.now()))
   }, [onPromptChange, setControlPromptEditorRerenderKey])
-  const editorValue = payload.edition_type === EditionType.jinja2
-    ? (payload.jinja2_text || '')
-    : payload.text
-  const shouldShowComputerUseTip = !!showComputerUseTip
-    && extractToolConfigIds(editorValue || '').size > 0
 
   return (
     <Editor
@@ -123,7 +104,7 @@ const ConfigPromptItem: FC<Props> = ({
         <div className="relative left-1 flex items-center">
           {payload.role === PromptRole.system
             ? (
-                <div className="relative left-[-4px] text-xs font-semibold uppercase text-text-secondary">
+                <div className="relative left-[-4px] text-xs font-semibold text-text-secondary uppercase">
                   SYSTEM
                 </div>
               )
@@ -138,18 +119,18 @@ const ConfigPromptItem: FC<Props> = ({
                 />
               )}
 
-          <Tooltip
-            popupContent={
-              <div className="max-w-[180px]">{!!payload.role && t(`${i18nPrefix}.roleDescription.${payload.role}`, { ns: 'workflow' })}</div>
-            }
-            triggerClassName="w-4 h-4"
-          />
+          {!!payload.role && (
+            <Infotip
+              aria-label={t(`${i18nPrefix}.roleDescription.${payload.role}`, { ns: 'workflow' })}
+              popupClassName="w-[180px]"
+            >
+              {t(`${i18nPrefix}.roleDescription.${payload.role}`, { ns: 'workflow' })}
+            </Infotip>
+          )}
         </div>
       )}
-      value={editorValue}
+      value={payload.edition_type === EditionType.jinja2 ? (payload.jinja2_text || '') : payload.text}
       onChange={onPromptChange}
-      promptMetadata={payload.metadata}
-      onPromptMetadataChange={onMetadataChange}
       readOnly={readOnly}
       showRemove={canRemove}
       onRemove={onRemove}
@@ -170,15 +151,6 @@ const ConfigPromptItem: FC<Props> = ({
       varList={varList}
       handleAddVariable={handleAddVariable}
       isSupportFileVar
-      isSupportSandbox={isSupportSandbox}
-      disableToolBlocks={disableToolBlocks}
-      onBlur={onPromptEditorBlur}
-      footer={(
-        <ComputerUseTip
-          visible={shouldShowComputerUseTip}
-          onEnable={() => onEnableComputerUse?.()}
-        />
-      )}
     />
   )
 }

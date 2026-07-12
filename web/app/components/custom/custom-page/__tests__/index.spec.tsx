@@ -1,23 +1,50 @@
-import type { AppContextValue } from '@/context/app-context'
-import type { SystemFeatures } from '@/types/feature'
-import { render, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import type { AppContextStateMockState } from '@/__tests__/utils/mock-app-context-state'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockProviderContextValue } from '@/__mocks__/provider-context'
-import { useToastContext } from '@/app/components/base/toast/context'
+import { renderWithSystemFeatures } from '@/__tests__/utils/mock-system-features'
 import { contactSalesUrl, defaultPlan } from '@/app/components/billing/config'
 import { Plan } from '@/app/components/billing/type'
 import {
   initialLangGeniusVersionInfo,
   initialWorkspaceInfo,
-  useAppContext,
-  userProfilePlaceholder,
-} from '@/context/app-context'
-import { useGlobalPublicStore } from '@/context/global-public-context'
+} from '@/context/app-context-defaults'
 import { useModalContext } from '@/context/modal-context'
 import { useProviderContext } from '@/context/provider-context'
-import { defaultSystemFeatures } from '@/types/feature'
 import CustomPage from '../index'
+
+vi.mock('@/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/config')>()
+  return {
+    ...actual,
+    IS_CLOUD_EDITION: true,
+  }
+})
+
+const render = (ui: ReactElement) => renderWithSystemFeatures(ui, {
+  systemFeatures: {
+    branding: {
+      enabled: true,
+      workspace_logo: 'https://example.com/workspace-logo.png',
+    },
+  },
+})
+
+const { mockToast } = vi.hoisted(() => {
+  const mockToast = Object.assign(vi.fn(), {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+    dismiss: vi.fn(),
+    update: vi.fn(),
+    promise: vi.fn(),
+  })
+  return { mockToast }
+})
+const mockUseAppContext = vi.hoisted(() => vi.fn())
 
 vi.mock('@/context/provider-context', () => ({
   useProviderContext: vi.fn(),
@@ -25,25 +52,21 @@ vi.mock('@/context/provider-context', () => ({
 vi.mock('@/context/modal-context', () => ({
   useModalContext: vi.fn(),
 }))
-vi.mock('@/context/app-context', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/context/app-context')>()
-  return {
-    ...actual,
-    useAppContext: vi.fn(),
-  }
-})
-vi.mock('@/context/global-public-context', () => ({
-  useGlobalPublicStore: vi.fn(),
-}))
-vi.mock('@/app/components/base/toast/context', () => ({
-  useToastContext: vi.fn(),
+vi.mock('@langgenius/dify-ui/toast', () => ({
+  toast: mockToast,
 }))
 
 const mockUseProviderContext = vi.mocked(useProviderContext)
 const mockUseModalContext = vi.mocked(useModalContext)
-const mockUseAppContext = vi.mocked(useAppContext)
-const mockUseGlobalPublicStore = vi.mocked(useGlobalPublicStore)
-const mockUseToastContext = vi.mocked(useToastContext)
+
+const testUserProfile = {
+  id: '',
+  name: '',
+  email: '',
+  avatar: '',
+  avatar_url: '',
+  is_password_set: false,
+}
 
 const createProviderContext = ({
   enableBilling = false,
@@ -61,8 +84,8 @@ const createProviderContext = ({
   })
 }
 
-const createAppContextValue = (): AppContextValue => ({
-  userProfile: userProfilePlaceholder,
+const createAppContextValue = (): AppContextStateMockState => ({
+  userProfile: testUserProfile,
   mutateUserProfile: vi.fn(),
   currentWorkspace: {
     ...initialWorkspaceInfo,
@@ -77,18 +100,8 @@ const createAppContextValue = (): AppContextValue => ({
   isCurrentWorkspaceDatasetOperator: false,
   mutateCurrentWorkspace: vi.fn(),
   langGeniusVersionInfo: initialLangGeniusVersionInfo,
-  useSelector: vi.fn() as unknown as AppContextValue['useSelector'],
   isLoadingCurrentWorkspace: false,
-  isValidatingCurrentWorkspace: false,
-})
-
-const createSystemFeatures = (): SystemFeatures => ({
-  ...defaultSystemFeatures,
-  branding: {
-    ...defaultSystemFeatures.branding,
-    enabled: true,
-    workspace_logo: 'https://example.com/workspace-logo.png',
-  },
+  workspacePermissionKeys: [],
 })
 
 describe('CustomPage', () => {
@@ -102,13 +115,6 @@ describe('CustomPage', () => {
       setShowPricingModal,
     } as unknown as ReturnType<typeof useModalContext>)
     mockUseAppContext.mockReturnValue(createAppContextValue())
-    mockUseGlobalPublicStore.mockImplementation(selector => selector({
-      systemFeatures: createSystemFeatures(),
-      setSystemFeatures: vi.fn(),
-    }))
-    mockUseToastContext.mockReturnValue({
-      notify: vi.fn(),
-    } as unknown as ReturnType<typeof useToastContext>)
   })
 
   // Integration coverage for the page and its child custom brand section.
@@ -134,7 +140,7 @@ describe('CustomPage', () => {
       expect(screen.getByText('custom.upgradeTip.title')).toBeInTheDocument()
       expect(screen.queryByText('custom.customize.contactUs')).not.toBeInTheDocument()
 
-      await user.click(screen.getByText('billing.upgradeBtn.encourageShort'))
+      await user.click(screen.getByRole('button', { name: 'billing.upgradeBtn.encourageShort' }))
 
       expect(setShowPricingModal).toHaveBeenCalledTimes(1)
     })

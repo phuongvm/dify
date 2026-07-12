@@ -1,6 +1,7 @@
 import type { UpdateWorkflowNodesMapPayload } from '../workflow-variable-block'
 import type { WorkflowNodesMap } from '../workflow-variable-block/node'
-import type { NodeOutPutVar, ValueSelector, Var } from '@/app/components/workflow/types'
+import type { ValueSelector, Var } from '@/app/components/workflow/types'
+import { PreviewCard, PreviewCardContent, PreviewCardTrigger } from '@langgenius/dify-ui/preview-card'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
 import { mergeRegister } from '@lexical/utils'
 import {
@@ -13,14 +14,12 @@ import {
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import Tooltip from '@/app/components/base/tooltip'
 import {
   isConversationVar,
   isENV,
   isGlobalVar,
   isRagVariableVar,
   isSystemVar,
-  isValueSelectorInNodeOutputVars,
 } from '@/app/components/workflow/nodes/_base/components/variable/utils'
 import VarFullPathPanel from '@/app/components/workflow/nodes/_base/components/variable/var-full-path-panel'
 import {
@@ -34,7 +33,6 @@ import { HITLInputNode } from './node'
 type HITLInputVariableBlockComponentProps = {
   variables: string[]
   workflowNodesMap: WorkflowNodesMap
-  nodeOutputVars?: NodeOutPutVar[]
   environmentVariables?: Var[]
   conversationVariables?: Var[]
   ragVariables?: Var[]
@@ -47,7 +45,6 @@ type HITLInputVariableBlockComponentProps = {
 const HITLInputVariableBlockComponent = ({
   variables,
   workflowNodesMap = {},
-  nodeOutputVars,
   getVarType,
   environmentVariables,
   conversationVariables,
@@ -66,14 +63,10 @@ const HITLInputVariableBlockComponent = ({
     }
   )()
   const [localWorkflowNodesMap, setLocalWorkflowNodesMap] = useState<WorkflowNodesMap>(workflowNodesMap)
-  const [localNodeOutputVars, setLocalNodeOutputVars] = useState<NodeOutPutVar[]>(nodeOutputVars || [])
-  const node = localWorkflowNodesMap![variables[isRagVar ? 1 : 0]]
+  const node = localWorkflowNodesMap![variables[isRagVar ? 1 : 0]!]
 
   const isException = isExceptionVariable(varName, node?.type)
   const variableValid = useMemo(() => {
-    if (localNodeOutputVars.length)
-      return isValueSelectorInNodeOutputVars(variables, localNodeOutputVars)
-
     let variableValid = true
     const isEnv = isENV(variables)
     const isChatVar = isConversationVar(variables)
@@ -97,7 +90,7 @@ const HITLInputVariableBlockComponent = ({
       variableValid = !!node
     }
     return variableValid
-  }, [variables, node, environmentVariables, conversationVariables, isRagVar, ragVariables, localNodeOutputVars])
+  }, [variables, node, environmentVariables, conversationVariables, isRagVar, ragVariables])
 
   useEffect(() => {
     if (!editor.hasNodes([HITLInputNode]))
@@ -108,8 +101,6 @@ const HITLInputVariableBlockComponent = ({
         UPDATE_WORKFLOW_NODES_MAP,
         (payload: UpdateWorkflowNodesMapPayload) => {
           setLocalWorkflowNodesMap(payload.workflowNodesMap)
-          setLocalNodeOutputVars(payload.nodeOutputVars)
-
           return true
         },
         COMMAND_PRIORITY_EDITOR,
@@ -128,29 +119,26 @@ const HITLInputVariableBlockComponent = ({
     />
   )
 
-  if (!node)
+  if (!node || !isShowAPart)
     return Item
 
   return (
-    <Tooltip
-      noDecoration
-      popupContent={(
+    <PreviewCard>
+      <PreviewCardTrigger delay={300} closeDelay={200} render={<div>{Item}</div>} />
+      <PreviewCardContent popupClassName="border-0 bg-transparent p-0 shadow-none">
         <VarFullPathPanel
           nodeName={node.title}
           path={variables.slice(1)}
           varType={getVarType
             ? getVarType({
-                nodeId: variables[0],
+                nodeId: variables[0]!,
                 valueSelector: variables,
               })
             : Type.string}
           nodeType={node?.type}
         />
-      )}
-      disabled={!isShowAPart}
-    >
-      <div>{Item}</div>
-    </Tooltip>
+      </PreviewCardContent>
+    </PreviewCard>
   )
 }
 

@@ -1,21 +1,21 @@
 'use client'
 import type { FC } from 'react'
 import type { MetadataItemWithEdit } from '../types'
+import { cn } from '@langgenius/dify-ui/cn'
 import { RiDeleteBinLine } from '@remixicon/react'
 import * as React from 'react'
-import { cn } from '@/utils/classnames'
 import { UpdateType } from '../types'
 import EditedBeacon from './edited-beacon'
 import InputCombined from './input-combined'
 import InputHasSetMultipleValue from './input-has-set-multiple-value'
 import Label from './label'
 
-type Props = {
+type Props = Readonly<{
   payload: MetadataItemWithEdit
   onChange: (payload: MetadataItemWithEdit) => void
   onRemove: (id: string) => void
   onReset: (id: string) => void
-}
+}>
 
 const EditMetadatabatchItem: FC<Props> = ({
   payload,
@@ -38,6 +38,7 @@ const EditMetadatabatchItem: FC<Props> = ({
           )
         : (
             <InputCombined
+              label={payload.name}
               type={payload.type}
               value={payload.value}
               onChange={v => onChange({ ...payload, value: v as string })}

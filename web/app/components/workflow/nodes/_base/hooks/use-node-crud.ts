@@ -1,17 +1,21 @@
 import type { CommonNodeType } from '@/app/components/workflow/types'
-import { useCallback } from 'react'
-import { useStoreApi } from 'reactflow'
+import { useCallback, useEffect, useRef } from 'react'
 import { useNodeDataUpdate } from '@/app/components/workflow/hooks'
 
 const useNodeCrud = <T>(id: string, data: CommonNodeType<T>) => {
   const { handleNodeDataUpdateWithSyncDraft } = useNodeDataUpdate()
+  const updateRef = useRef(handleNodeDataUpdateWithSyncDraft)
 
-  const setInputs = (newInputs: CommonNodeType<T>) => {
-    handleNodeDataUpdateWithSyncDraft({
+  useEffect(() => {
+    updateRef.current = handleNodeDataUpdateWithSyncDraft
+  }, [handleNodeDataUpdateWithSyncDraft])
+
+  const setInputs = useCallback((newInputs: CommonNodeType<T>) => {
+    updateRef.current({
       id,
       data: newInputs,
     })
-  }
+  }, [id])
 
   return {
     inputs: data,
@@ -20,27 +24,3 @@ const useNodeCrud = <T>(id: string, data: CommonNodeType<T>) => {
 }
 
 export default useNodeCrud
-
-export const useNodeCurdKit = <T>(id: string) => {
-  const store = useStoreApi()
-  const { handleNodeDataUpdateWithSyncDraft } = useNodeDataUpdate()
-
-  const getNodeData = useCallback(() => {
-    const { getNodes } = store.getState()
-    const nodes = getNodes()
-
-    return nodes.find(node => node.id === id)
-  }, [store, id])
-
-  const handleNodeDataUpdate = useCallback((data: Partial<CommonNodeType<T>>) => {
-    handleNodeDataUpdateWithSyncDraft({
-      id,
-      data,
-    })
-  }, [id, handleNodeDataUpdateWithSyncDraft])
-
-  return {
-    getNodeData,
-    handleNodeDataUpdate,
-  }
-}

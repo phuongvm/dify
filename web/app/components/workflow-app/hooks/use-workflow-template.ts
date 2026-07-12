@@ -7,36 +7,32 @@ import {
 } from '@/app/components/workflow/constants'
 import answerDefault from '@/app/components/workflow/nodes/answer/default'
 import llmDefault from '@/app/components/workflow/nodes/llm/default'
+import startPlaceholderDefault from '@/app/components/workflow/nodes/start-placeholder/default'
 import startDefault from '@/app/components/workflow/nodes/start/default'
-import { BlockEnum } from '@/app/components/workflow/types'
 import { generateNewNode } from '@/app/components/workflow/utils'
-import { STORAGE_KEYS } from '@/config/storage-keys'
-import { storage } from '@/utils/storage'
+import { AppModeEnum } from '@/types/app'
 import { useIsChatMode } from './use-is-chat-mode'
 
 export const useWorkflowTemplate = () => {
   const isChatMode = useIsChatMode()
   const appDetail = useAppStore(s => s.appDetail)
-  const isSandboxedByType = appDetail?.runtime_type === 'sandboxed'
-  const isSandboxedBySelection = appDetail?.id
-    ? storage.getBoolean(`${STORAGE_KEYS.LOCAL.WORKFLOW.SANDBOX_RUNTIME_PREFIX}${appDetail.id}`) === true
-    : false
-  const isSandboxed = isSandboxedByType || isSandboxedBySelection
   const { t } = useTranslation()
 
-  const { newNode: startNode } = generateNewNode({
-    data: {
-      ...startDefault.defaultValue as StartNodeType,
-      type: startDefault.metaData.type,
-      title: t(`blocks.${startDefault.metaData.type}`, { ns: 'workflow' }),
-    },
-    position: START_INITIAL_POSITION,
-  })
+  const createStartNode = () => {
+    const { newNode: startNode } = generateNewNode({
+      data: {
+        ...startDefault.defaultValue as StartNodeType,
+        type: startDefault.metaData.type,
+        title: t(`blocks.${startDefault.metaData.type}`, { ns: 'workflow' }),
+      },
+      position: START_INITIAL_POSITION,
+    })
+
+    return startNode
+  }
 
   if (isChatMode) {
-    const llmTitle = isSandboxed
-      ? t('blocks.agent', { ns: 'workflow' })
-      : t(`blocks.${llmDefault.metaData.type}` as const, { ns: 'workflow' })
+    const startNode = createStartNode()
 
     const { newNode: llmNode } = generateNewNode({
       id: 'llm',
@@ -47,9 +43,8 @@ export const useWorkflowTemplate = () => {
           query_prompt_template: '{{#sys.query#}}\n\n{{#sys.files#}}',
         },
         selected: true,
-        _iconTypeOverride: isSandboxed ? BlockEnum.Agent : undefined,
         type: llmDefault.metaData.type,
-        title: llmTitle,
+        title: t(`blocks.${llmDefault.metaData.type}`, { ns: 'workflow' }),
       },
       position: {
         x: START_INITIAL_POSITION.x + NODE_WIDTH_X_OFFSET,
@@ -61,7 +56,7 @@ export const useWorkflowTemplate = () => {
       id: 'answer',
       data: {
         ...answerDefault.defaultValue,
-        answer: `{{#${llmNode.id}.generation#}}`,
+        answer: `{{#${llmNode.id}.text#}}`,
         type: answerDefault.metaData.type,
         title: t(`blocks.${answerDefault.metaData.type}`, { ns: 'workflow' }),
       },
@@ -92,10 +87,26 @@ export const useWorkflowTemplate = () => {
       edges: [startToLlmEdge, llmToAnswerEdge],
     }
   }
-  else {
+  if (appDetail?.mode === AppModeEnum.WORKFLOW) {
+    const { newNode: startPlaceholderNode } = generateNewNode({
+      data: {
+        ...startPlaceholderDefault.defaultValue,
+        selected: true,
+        type: startPlaceholderDefault.metaData.type,
+        title: t(`blocks.${startPlaceholderDefault.metaData.type}`, { ns: 'workflow' }),
+        desc: '',
+      },
+      position: START_INITIAL_POSITION,
+    })
+
     return {
-      nodes: [startNode],
+      nodes: [startPlaceholderNode],
       edges: [],
     }
+  }
+
+  return {
+    nodes: [createStartNode()],
+    edges: [],
   }
 }

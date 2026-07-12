@@ -1,10 +1,10 @@
 'use client'
 
+import { Button } from '@langgenius/dify-ui/button'
 import { RiAddLine } from '@remixicon/react'
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import Button from '@/app/components/base/button'
 import Input from '@/app/components/base/input'
 import { useExternalKnowledgeApi } from '@/context/external-knowledge-api-context'
 import { useModalContext } from '@/context/modal-context'
@@ -33,7 +33,7 @@ const ExternalApiSelection: React.FC<ExternalApiSelectionProps> = ({ external_kn
 
   useEffect(() => {
     if (apiItems.length > 0) {
-      const newSelectedId = external_knowledge_api_id || apiItems[0].value
+      const newSelectedId = external_knowledge_api_id || apiItems[0]!.value
       setSelectedApiId(newSelectedId)
       if (newSelectedId !== external_knowledge_api_id)
         onChange({ external_knowledge_api_id: newSelectedId, external_knowledge_id })
@@ -56,14 +56,14 @@ const ExternalApiSelection: React.FC<ExternalApiSelectionProps> = ({ external_kn
 
   useEffect(() => {
     if (!external_knowledge_api_id && apiItems.length > 0)
-      onChange({ external_knowledge_api_id: apiItems[0].value, external_knowledge_id })
+      onChange({ external_knowledge_api_id: apiItems[0]!.value, external_knowledge_id })
   }, [])
 
   return (
     <form className="flex flex-col gap-4 self-stretch">
       <div className="flex flex-col gap-1 self-stretch">
         <div className="flex flex-col self-stretch">
-          <label className="text-text-secondary system-sm-semibold">{t('externalAPIPanelTitle', { ns: 'dataset' })}</label>
+          <label className="system-sm-semibold text-text-secondary">{t('externalAPIPanelTitle', { ns: 'dataset' })}</label>
         </div>
         {apiItems.length > 0
           ? (
@@ -78,14 +78,14 @@ const ExternalApiSelection: React.FC<ExternalApiSelectionProps> = ({ external_kn
             )
           : (
               <Button variant="tertiary" onClick={handleAddNewAPI} className="justify-start gap-0.5">
-                <RiAddLine className="h-4 w-4 text-text-tertiary" />
-                <span className="text-text-tertiary system-sm-regular">{t('noExternalKnowledge', { ns: 'dataset' })}</span>
+                <RiAddLine className="size-4 text-text-tertiary" />
+                <span className="system-sm-regular text-text-tertiary">{t('noExternalKnowledge', { ns: 'dataset' })}</span>
               </Button>
             )}
       </div>
       <div className="flex flex-col gap-1 self-stretch">
         <div className="flex flex-col self-stretch">
-          <label className="text-text-secondary system-sm-semibold">{t('externalKnowledgeId', { ns: 'dataset' })}</label>
+          <label className="system-sm-semibold text-text-secondary">{t('externalKnowledgeId', { ns: 'dataset' })}</label>
         </div>
         <Input
           value={external_knowledge_id}

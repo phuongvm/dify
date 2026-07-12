@@ -8,24 +8,20 @@ import ListEmpty from '@/app/components/base/list-empty'
 import { useStore } from '@/app/components/workflow/store'
 import VarReferenceVars from './var-reference-vars'
 
-type Props = {
+type Props = Readonly<{
   vars: NodeOutPutVar[]
   popupFor?: 'assigned' | 'toAssigned'
   onChange: (value: ValueSelector, varDetail: Var) => void
   itemWidth?: number
   isSupportFileVar?: boolean
-  hideSearch?: boolean
-  zIndex?: number
   preferSchemaType?: boolean
-}
+}>
 const VarReferencePopup: FC<Props> = ({
   vars,
   popupFor,
   onChange,
   itemWidth,
   isSupportFileVar = true,
-  hideSearch,
-  zIndex,
   preferSchemaType,
 }) => {
   const { t } = useTranslation()
@@ -36,7 +32,7 @@ const VarReferencePopup: FC<Props> = ({
   // max-h-[300px] overflow-y-auto todo: use portal to handle long list
   return (
     <div
-      className="space-y-1 rounded-lg border-[0.5px] border-components-panel-border bg-components-panel-bg-blur p-1 shadow-lg"
+      className="space-y-1 rounded-lg border border-components-panel-border bg-components-panel-bg p-1 shadow-lg"
       style={{
         width: itemWidth || 228,
       }}
@@ -47,7 +43,7 @@ const VarReferencePopup: FC<Props> = ({
                 <ListEmpty
                   title={t('variableReference.noAvailableVars', { ns: 'workflow' }) || ''}
                   description={(
-                    <div className="text-text-tertiary system-xs-regular">
+                    <div className="system-xs-regular text-text-tertiary">
                       {t('variableReference.noVarsForOperation', { ns: 'workflow' })}
                     </div>
                   )}
@@ -57,7 +53,7 @@ const VarReferencePopup: FC<Props> = ({
                 <ListEmpty
                   title={t('variableReference.noAssignedVars', { ns: 'workflow' }) || ''}
                   description={(
-                    <div className="text-text-tertiary system-xs-regular">
+                    <div className="system-xs-regular text-text-tertiary">
                       {t('variableReference.assignedVarsDescription', { ns: 'workflow' })}
                     </div>
                   )}
@@ -70,11 +66,9 @@ const VarReferencePopup: FC<Props> = ({
               onChange={onChange}
               itemWidth={itemWidth}
               isSupportFileVar={isSupportFileVar}
-              zIndex={zIndex}
               showManageInputField={showManageRagInputFields}
               onManageInputField={() => setShowInputFieldPanel?.(true)}
               preferSchemaType={preferSchemaType}
-              hideSearch={hideSearch}
             />
           )}
     </div>

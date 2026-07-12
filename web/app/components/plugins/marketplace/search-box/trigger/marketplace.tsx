@@ -1,8 +1,8 @@
 import type { Tag } from '../../../hooks'
-import { useTranslation } from '#i18n'
+import { cn } from '@langgenius/dify-ui/cn'
 import { RiArrowDownSLine, RiCloseCircleFill, RiFilter3Line } from '@remixicon/react'
 import * as React from 'react'
-import { cn } from '@/utils/classnames'
+import { useTranslation } from '#i18n'
 
 type MarketplaceTriggerProps = {
   selectedTagsLength: number
@@ -24,7 +24,7 @@ const MarketplaceTrigger = ({
   return (
     <div
       className={cn(
-        'flex h-8 cursor-pointer select-none items-center rounded-lg px-2 py-1 text-text-tertiary',
+        'flex h-8 cursor-pointer items-center rounded-lg px-2 py-1 text-text-tertiary select-none',
         !!selectedTagsLength && 'border-[0.5px] border-components-button-secondary-border bg-components-button-secondary-bg shadow-xs shadow-shadow-shadow-3',
         open && !selectedTagsLength && 'bg-state-base-hover',
       )}
@@ -39,7 +39,7 @@ const MarketplaceTrigger = ({
         {
           !!selectedTagsLength && (
             <span className="text-text-secondary">
-              {tags.map(tag => tagsMap[tag].label).slice(0, 2).join(',')}
+              {tags.map(tag => tagsMap[tag]!.label).slice(0, 2).join(',')}
             </span>
           )
         }

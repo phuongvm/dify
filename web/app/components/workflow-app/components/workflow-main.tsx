@@ -1,10 +1,10 @@
-import type { ReactNode } from 'react'
 import type { Features as FeaturesData } from '@/app/components/base/features/types'
 import type { WorkflowProps } from '@/app/components/workflow'
 import type { CollaborationUpdate } from '@/app/components/workflow/collaboration/types/collaboration'
 import type { Shape as HooksStoreShape } from '@/app/components/workflow/hooks-store/store'
 import type { Edge, Node } from '@/app/components/workflow/types'
 import type { FetchWorkflowDraftResponse } from '@/types/workflow'
+import { useAtomValue } from 'jotai'
 import {
   useCallback,
   useEffect,
@@ -12,45 +12,48 @@ import {
   useRef,
 } from 'react'
 import { useReactFlow } from 'reactflow'
-import { useFeatures, useFeaturesStore } from '@/app/components/base/features/hooks'
+import { useStore as useAppStore } from '@/app/components/app/store'
+import { useFeaturesStore } from '@/app/components/base/features/hooks'
 import { FILE_EXTS } from '@/app/components/base/prompt-editor/constants'
 import { WorkflowWithInnerContext } from '@/app/components/workflow'
-import { collaborationManager, useCollaboration } from '@/app/components/workflow/collaboration'
+import { useWorkflowDraftGraphForCanvas } from '@/app/components/workflow-app/hooks/use-workflow-draft-graph-for-canvas'
+import { collaborationManager } from '@/app/components/workflow/collaboration/core/collaboration-manager'
+import { useCollaboration } from '@/app/components/workflow/collaboration/hooks/use-collaboration'
 import { useWorkflowUpdate } from '@/app/components/workflow/hooks/use-workflow-interactions'
-import { MCPToolAvailabilityProvider } from '@/app/components/workflow/nodes/_base/components/mcp-tool-availability'
 import { useStore, useWorkflowStore } from '@/app/components/workflow/store'
 import { SupportUploadFileTypes } from '@/app/components/workflow/types'
+import { userProfileIdAtom } from '@/context/account-state'
+import { workspacePermissionKeysAtom } from '@/context/permission-state'
 import { fetchWorkflowDraft } from '@/service/workflow'
+import { getAppACLCapabilities } from '@/utils/permission'
 import {
   useAvailableNodesMetaData,
   useConfigsMap,
-  useDSL,
+  useDSLByCanEdit,
   useGetRunAndTraceUrl,
   useInspectVarsCrud,
-  useNodesSyncDraft,
+  useNodesSyncDraftByCanEdit,
   useSetWorkflowVarsWithValue,
   useWorkflowRefreshDraft,
-  useWorkflowRun,
-  useWorkflowStartRun,
+  useWorkflowRunByCanEdit,
+  useWorkflowStartRunByCanEdit,
 } from '../hooks'
 import WorkflowChildren from './workflow-children'
 
-type WorkflowMainProps = Pick<WorkflowProps, 'nodes' | 'edges' | 'viewport'> & {
-  headerLeftSlot?: ReactNode
-}
+type WorkflowMainProps = Pick<WorkflowProps, 'nodes' | 'edges' | 'viewport'>
 type WorkflowDataUpdatePayload = Pick<FetchWorkflowDraftResponse, 'features' | 'conversation_variables' | 'environment_variables'>
 const WorkflowMain = ({
   nodes,
   edges,
   viewport,
-  headerLeftSlot,
 }: WorkflowMainProps) => {
-  const sandboxEnabled = useFeatures(state => state.features.sandbox?.enabled) ?? false
   const featuresStore = useFeaturesStore()
   const workflowStore = useWorkflowStore()
   const appId = useStore(s => s.appId)
+  const appDetail = useAppStore(s => s.appDetail)
   const containerRef = useRef<HTMLDivElement>(null)
   const reactFlow = useReactFlow()
+  const { getWorkflowDraftGraphForCanvas } = useWorkflowDraftGraphForCanvas(appDetail?.mode)
 
   const reactFlowStore = useMemo(() => ({
     getState: () => ({
@@ -75,6 +78,16 @@ const WorkflowMain = ({
 
   const filteredCursors = Object.fromEntries(
     Object.entries(cursors).filter(([userId]) => userId !== myUserId),
+  )
+  const currentUserId = useAtomValue(userProfileIdAtom)
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
+  const appACLCapabilities = useMemo(
+    () => getAppACLCapabilities(appDetail?.permission_keys, {
+      currentUserId,
+      resourceMaintainer: appDetail?.maintainer,
+      workspacePermissionKeys,
+    }),
+    [appDetail?.maintainer, appDetail?.permission_keys, currentUserId, workspacePermissionKeys],
   )
 
   useEffect(() => {
@@ -107,7 +120,7 @@ const WorkflowMain = ({
           },
           enabled: !!(features.file_upload?.enabled || features.file_upload?.image?.enabled),
           allowed_file_types: features.file_upload?.allowed_file_types || [SupportUploadFileTypes.image],
-          allowed_file_extensions: features.file_upload?.allowed_file_extensions || FILE_EXTS[SupportUploadFileTypes.image].map(ext => `.${ext}`),
+          allowed_file_extensions: features.file_upload?.allowed_file_extensions || FILE_EXTS[SupportUploadFileTypes.image]!.map(ext => `.${ext}`),
           allowed_file_upload_methods: features.file_upload?.allowed_file_upload_methods || features.file_upload?.image?.transfer_methods || ['local_file', 'remote_url'],
           number_limits: features.file_upload?.number_limits || features.file_upload?.image?.number_limits || 3,
         },
@@ -122,7 +135,6 @@ const WorkflowMain = ({
         citation: features.retriever_resource || { enabled: false },
         moderation: features.sensitive_word_avoidance || { enabled: false },
         annotationReply: features.annotation_reply || { enabled: false },
-        sandbox: features.sandbox || { enabled: false },
       }
 
       setFeatures(transformedFeatures)
@@ -140,7 +152,7 @@ const WorkflowMain = ({
   const {
     doSyncWorkflowDraft,
     syncWorkflowDraftWhenPageClose,
-  } = useNodesSyncDraft()
+  } = useNodesSyncDraftByCanEdit(appACLCapabilities.canEdit)
   const { handleRefreshWorkflowDraft } = useWorkflowRefreshDraft()
   const { handleUpdateWorkflowCanvas } = useWorkflowUpdate()
   const {
@@ -149,7 +161,7 @@ const WorkflowMain = ({
     handleRestoreFromPublishedWorkflow,
     handleRun,
     handleStopRun,
-  } = useWorkflowRun()
+  } = useWorkflowRunByCanEdit(appACLCapabilities.canEdit)
 
   useEffect(() => {
     if (!appId || !isCollaborationEnabled)
@@ -181,13 +193,8 @@ const WorkflowMain = ({
         handleWorkflowDataUpdate(response)
 
         // Update workflow canvas (nodes, edges, viewport)
-        if (response.graph) {
-          handleUpdateWorkflowCanvas({
-            nodes: response.graph.nodes || [],
-            edges: response.graph.edges || [],
-            viewport: response.graph.viewport || { x: 0, y: 0, zoom: 1 },
-          })
-        }
+        if (response.graph)
+          handleUpdateWorkflowCanvas(getWorkflowDraftGraphForCanvas(response.graph))
       }
       catch (error) {
         console.error('Failed to fetch updated workflow:', error)
@@ -195,7 +202,7 @@ const WorkflowMain = ({
     })
 
     return unsubscribe
-  }, [appId, handleWorkflowDataUpdate, handleUpdateWorkflowCanvas, isCollaborationEnabled])
+  }, [appId, getWorkflowDraftGraphForCanvas, handleWorkflowDataUpdate, handleUpdateWorkflowCanvas, isCollaborationEnabled])
 
   // Listen for sync requests from other users (only processed by leader)
   useEffect(() => {
@@ -216,13 +223,13 @@ const WorkflowMain = ({
     handleWorkflowTriggerWebhookRunInWorkflow,
     handleWorkflowTriggerPluginRunInWorkflow,
     handleWorkflowRunAllTriggersInWorkflow,
-  } = useWorkflowStartRun()
+  } = useWorkflowStartRunByCanEdit(appACLCapabilities.canEdit)
   const availableNodesMetaData = useAvailableNodesMetaData()
   const { getWorkflowRunAndTraceUrl } = useGetRunAndTraceUrl()
   const {
     exportCheck,
     handleExportDSL,
-  } = useDSL()
+  } = useDSLByCanEdit(appACLCapabilities.canEdit)
 
   const configsMap = useConfigsMap()
 
@@ -246,7 +253,7 @@ const WorkflowMain = ({
     invalidateConversationVarValues,
   } = useInspectVarsCrud()
 
-  const hooksStore = useMemo<Partial<HooksStoreShape>>(() => {
+  const hooksStore = useMemo(() => {
     return {
       syncWorkflowDraftWhenPageClose,
       doSyncWorkflowDraft,
@@ -282,6 +289,13 @@ const WorkflowMain = ({
       invalidateSysVarValues,
       resetConversationVar,
       invalidateConversationVarValues,
+      accessControl: {
+        canEdit: appACLCapabilities.canEdit,
+        canComment: appACLCapabilities.canComment,
+        canRun: appACLCapabilities.canTestAndRun,
+        canImportExportDSL: appACLCapabilities.canImportExportDSL,
+        canReleaseAndVersion: appACLCapabilities.canReleaseAndVersion,
+      },
       configsMap,
     }
   }, [
@@ -319,27 +333,26 @@ const WorkflowMain = ({
     invalidateSysVarValues,
     resetConversationVar,
     invalidateConversationVarValues,
+    appACLCapabilities,
     configsMap,
   ])
 
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full"
+      className="relative size-full"
     >
       <WorkflowWithInnerContext
         nodes={nodes}
         edges={edges}
         viewport={viewport}
         onWorkflowDataUpdate={handleWorkflowDataUpdate}
-        hooksStore={hooksStore}
+        hooksStore={hooksStore as unknown as Partial<HooksStoreShape>}
         cursors={filteredCursors}
         myUserId={myUserId}
         onlineUsers={onlineUsers}
       >
-        <MCPToolAvailabilityProvider sandboxEnabled={sandboxEnabled}>
-          <WorkflowChildren headerLeftSlot={headerLeftSlot} />
-        </MCPToolAvailabilityProvider>
+        <WorkflowChildren />
       </WorkflowWithInnerContext>
     </div>
   )

@@ -1,34 +1,38 @@
 import logging
+from datetime import datetime
 
-from flask_restx import Resource, marshal_with
-from pydantic import BaseModel, Field, TypeAdapter
+from flask_restx import Resource
+from pydantic import BaseModel, Field, TypeAdapter, computed_field, field_validator
 
+from controllers.common.schema import register_response_schema_models, register_schema_models
 from controllers.console import console_ns
 from controllers.console.app.wraps import get_app_model
-from controllers.console.wraps import account_initialization_required, setup_required
-from fields.member_fields import AccountWithRole
-from fields.workflow_comment_fields import (
-    workflow_comment_basic_fields,
-    workflow_comment_create_fields,
-    workflow_comment_detail_fields,
-    workflow_comment_reply_create_fields,
-    workflow_comment_reply_update_fields,
-    workflow_comment_resolve_fields,
-    workflow_comment_update_fields,
+from controllers.console.wraps import (
+    RBACPermission,
+    RBACResourceScope,
+    account_initialization_required,
+    edit_permission_required,
+    rbac_permission_required,
+    setup_required,
+    with_current_tenant_id,
+    with_current_user,
 )
-from libs.login import current_user, login_required
-from models import App
+from extensions.ext_database import db
+from fields.base import ResponseModel
+from fields.member_fields import AccountWithRole
+from libs.helper import build_avatar_url, dump_response, to_timestamp
+from libs.login import login_required
+from models import Account, App
 from services.account_service import TenantService
 from services.workflow_comment_service import WorkflowCommentService
 
 logger = logging.getLogger(__name__)
-DEFAULT_REF_TEMPLATE_SWAGGER_2_0 = "#/definitions/{model}"
 
 
 class WorkflowCommentCreatePayload(BaseModel):
+    content: str = Field(..., description="Comment content")
     position_x: float = Field(..., description="Comment X position")
     position_y: float = Field(..., description="Comment Y position")
-    content: str = Field(..., description="Comment content")
     mentioned_user_ids: list[str] = Field(default_factory=list, description="Mentioned user IDs")
 
 
@@ -36,46 +40,175 @@ class WorkflowCommentUpdatePayload(BaseModel):
     content: str = Field(..., description="Comment content")
     position_x: float | None = Field(default=None, description="Comment X position")
     position_y: float | None = Field(default=None, description="Comment Y position")
-    mentioned_user_ids: list[str] = Field(default_factory=list, description="Mentioned user IDs")
+    mentioned_user_ids: list[str] | None = Field(
+        default=None,
+        description="Mentioned user IDs. Omit to keep existing mentions.",
+    )
 
 
-class WorkflowCommentReplyCreatePayload(BaseModel):
+class WorkflowCommentReplyPayload(BaseModel):
     content: str = Field(..., description="Reply content")
     mentioned_user_ids: list[str] = Field(default_factory=list, description="Mentioned user IDs")
 
 
-class WorkflowCommentReplyUpdatePayload(BaseModel):
-    content: str = Field(..., description="Reply content")
-    mentioned_user_ids: list[str] = Field(default_factory=list, description="Mentioned user IDs")
+class WorkflowCommentMentionUsersPayload(BaseModel):
+    users: list[AccountWithRole]
 
 
-class WorkflowCommentMentionUsersResponse(BaseModel):
-    users: list[AccountWithRole] = Field(description="Mentionable users")
+class WorkflowCommentAccount(ResponseModel):
+    id: str
+    name: str
+    email: str
+    avatar: str | None = Field(default=None, exclude=True)
+
+    @computed_field(return_type=str | None)  # type: ignore[prop-decorator]
+    @property
+    def avatar_url(self) -> str | None:
+        return build_avatar_url(self.avatar)
 
 
-for model in (
+class WorkflowCommentReply(ResponseModel):
+    id: str
+    content: str
+    created_by: str
+    created_by_account: WorkflowCommentAccount | None = None
+    created_at: int | None = None
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentMention(ResponseModel):
+    mentioned_user_id: str
+    mentioned_user_account: WorkflowCommentAccount | None = None
+    reply_id: str | None = None
+
+
+class WorkflowCommentBasic(ResponseModel):
+    id: str
+    position_x: float
+    position_y: float
+    content: str
+    created_by: str
+    created_by_account: WorkflowCommentAccount | None = None
+    created_at: int | None = None
+    updated_at: int | None = None
+    resolved: bool
+    resolved_at: int | None = None
+    resolved_by: str | None = None
+    resolved_by_account: WorkflowCommentAccount | None = None
+    reply_count: int
+    mention_count: int
+    participants: list[WorkflowCommentAccount]
+
+    @field_validator("created_at", "updated_at", "resolved_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentBasicList(ResponseModel):
+    data: list[WorkflowCommentBasic]
+
+
+class WorkflowCommentDetail(ResponseModel):
+    id: str
+    position_x: float
+    position_y: float
+    content: str
+    created_by: str
+    created_by_account: WorkflowCommentAccount | None = None
+    created_at: int | None = None
+    updated_at: int | None = None
+    resolved: bool
+    resolved_at: int | None = None
+    resolved_by: str | None = None
+    resolved_by_account: WorkflowCommentAccount | None = None
+    replies: list[WorkflowCommentReply]
+    mentions: list[WorkflowCommentMention]
+
+    @field_validator("created_at", "updated_at", "resolved_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentCreate(ResponseModel):
+    id: str
+    created_at: int | None = None
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentUpdate(ResponseModel):
+    id: str
+    updated_at: int | None = None
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentResolve(ResponseModel):
+    id: str
+    resolved: bool
+    resolved_at: int | None = None
+    resolved_by: str | None = None
+
+    @field_validator("resolved_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentReplyCreate(ResponseModel):
+    id: str
+    created_at: int | None = None
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+class WorkflowCommentReplyUpdate(ResponseModel):
+    id: str
+    updated_at: int | None = None
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def _normalize_timestamp(cls, value: datetime | int | None) -> int | None:
+        return to_timestamp(value)
+
+
+register_schema_models(
+    console_ns,
     WorkflowCommentCreatePayload,
     WorkflowCommentUpdatePayload,
-    WorkflowCommentReplyCreatePayload,
-    WorkflowCommentReplyUpdatePayload,
-):
-    console_ns.schema_model(model.__name__, model.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0))
-
-for model in (AccountWithRole, WorkflowCommentMentionUsersResponse):
-    console_ns.schema_model(model.__name__, model.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0))
-
-workflow_comment_basic_model = console_ns.model("WorkflowCommentBasic", workflow_comment_basic_fields)
-workflow_comment_detail_model = console_ns.model("WorkflowCommentDetail", workflow_comment_detail_fields)
-workflow_comment_create_model = console_ns.model("WorkflowCommentCreate", workflow_comment_create_fields)
-workflow_comment_update_model = console_ns.model("WorkflowCommentUpdate", workflow_comment_update_fields)
-workflow_comment_resolve_model = console_ns.model("WorkflowCommentResolve", workflow_comment_resolve_fields)
-workflow_comment_reply_create_model = console_ns.model(
-    "WorkflowCommentReplyCreate", workflow_comment_reply_create_fields
+    WorkflowCommentReplyPayload,
 )
-workflow_comment_reply_update_model = console_ns.model(
-    "WorkflowCommentReplyUpdate", workflow_comment_reply_update_fields
+register_response_schema_models(
+    console_ns,
+    AccountWithRole,
+    WorkflowCommentMentionUsersPayload,
+    WorkflowCommentAccount,
+    WorkflowCommentReply,
+    WorkflowCommentMention,
+    WorkflowCommentBasic,
+    WorkflowCommentBasicList,
+    WorkflowCommentDetail,
+    WorkflowCommentCreate,
+    WorkflowCommentUpdate,
+    WorkflowCommentResolve,
+    WorkflowCommentReplyCreate,
+    WorkflowCommentReplyUpdate,
 )
-workflow_comment_mention_users_model = console_ns.models[WorkflowCommentMentionUsersResponse.__name__]
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflow/comments")
@@ -85,34 +218,38 @@ class WorkflowCommentListApi(Resource):
     @console_ns.doc("list_workflow_comments")
     @console_ns.doc(description="Get all comments for a workflow")
     @console_ns.doc(params={"app_id": "Application ID"})
-    @console_ns.response(200, "Comments retrieved successfully", workflow_comment_basic_model)
+    @console_ns.response(200, "Comments retrieved successfully", console_ns.models[WorkflowCommentBasicList.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @with_current_tenant_id
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_VIEW_LAYOUT)
     @get_app_model()
-    @marshal_with(workflow_comment_basic_model, envelope="data")
-    def get(self, app_model: App):
+    def get(self, current_tenant_id: str, app_model: App):
         """Get all comments for a workflow."""
-        comments = WorkflowCommentService.get_comments(tenant_id=current_user.current_tenant_id, app_id=app_model.id)
+        comments = WorkflowCommentService.get_comments(tenant_id=current_tenant_id, app_id=app_model.id)
 
-        return comments
+        return WorkflowCommentBasicList.model_validate({"data": comments}).model_dump(mode="json")
 
     @console_ns.doc("create_workflow_comment")
     @console_ns.doc(description="Create a new workflow comment")
     @console_ns.doc(params={"app_id": "Application ID"})
     @console_ns.expect(console_ns.models[WorkflowCommentCreatePayload.__name__])
-    @console_ns.response(201, "Comment created successfully", workflow_comment_create_model)
+    @console_ns.response(201, "Comment created successfully", console_ns.models[WorkflowCommentCreate.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    @marshal_with(workflow_comment_create_model)
-    def post(self, app_model: App):
+    def post(self, current_tenant_id: str, current_user: Account, app_model: App):
         """Create a new workflow comment."""
         payload = WorkflowCommentCreatePayload.model_validate(console_ns.payload or {})
 
         result = WorkflowCommentService.create_comment(
-            tenant_id=current_user.current_tenant_id,
+            tenant_id=current_tenant_id,
             app_id=app_model.id,
             created_by=current_user.id,
             content=payload.content,
@@ -121,7 +258,7 @@ class WorkflowCommentListApi(Resource):
             mentioned_user_ids=payload.mentioned_user_ids,
         )
 
-        return result, 201
+        return dump_response(WorkflowCommentCreate, result), 201
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflow/comments/<string:comment_id>")
@@ -131,36 +268,40 @@ class WorkflowCommentDetailApi(Resource):
     @console_ns.doc("get_workflow_comment")
     @console_ns.doc(description="Get a specific workflow comment")
     @console_ns.doc(params={"app_id": "Application ID", "comment_id": "Comment ID"})
-    @console_ns.response(200, "Comment retrieved successfully", workflow_comment_detail_model)
+    @console_ns.response(200, "Comment retrieved successfully", console_ns.models[WorkflowCommentDetail.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @with_current_tenant_id
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_VIEW_LAYOUT)
     @get_app_model()
-    @marshal_with(workflow_comment_detail_model)
-    def get(self, app_model: App, comment_id: str):
+    def get(self, current_tenant_id: str, app_model: App, comment_id: str):
         """Get a specific workflow comment."""
         comment = WorkflowCommentService.get_comment(
-            tenant_id=current_user.current_tenant_id, app_id=app_model.id, comment_id=comment_id
+            tenant_id=current_tenant_id, app_id=app_model.id, comment_id=comment_id
         )
 
-        return comment
+        return dump_response(WorkflowCommentDetail, comment)
 
     @console_ns.doc("update_workflow_comment")
     @console_ns.doc(description="Update a workflow comment")
     @console_ns.doc(params={"app_id": "Application ID", "comment_id": "Comment ID"})
     @console_ns.expect(console_ns.models[WorkflowCommentUpdatePayload.__name__])
-    @console_ns.response(200, "Comment updated successfully", workflow_comment_update_model)
+    @console_ns.response(200, "Comment updated successfully", console_ns.models[WorkflowCommentUpdate.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    @marshal_with(workflow_comment_update_model)
-    def put(self, app_model: App, comment_id: str):
+    def put(self, current_tenant_id: str, current_user: Account, app_model: App, comment_id: str):
         """Update a workflow comment."""
         payload = WorkflowCommentUpdatePayload.model_validate(console_ns.payload or {})
 
         result = WorkflowCommentService.update_comment(
-            tenant_id=current_user.current_tenant_id,
+            tenant_id=current_tenant_id,
             app_id=app_model.id,
             comment_id=comment_id,
             user_id=current_user.id,
@@ -170,7 +311,7 @@ class WorkflowCommentDetailApi(Resource):
             mentioned_user_ids=payload.mentioned_user_ids,
         )
 
-        return result
+        return dump_response(WorkflowCommentUpdate, result)
 
     @console_ns.doc("delete_workflow_comment")
     @console_ns.doc(description="Delete a workflow comment")
@@ -179,17 +320,21 @@ class WorkflowCommentDetailApi(Resource):
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    def delete(self, app_model: App, comment_id: str):
+    def delete(self, current_tenant_id: str, current_user: Account, app_model: App, comment_id: str):
         """Delete a workflow comment."""
         WorkflowCommentService.delete_comment(
-            tenant_id=current_user.current_tenant_id,
+            tenant_id=current_tenant_id,
             app_id=app_model.id,
             comment_id=comment_id,
             user_id=current_user.id,
         )
 
-        return {"result": "success"}, 204
+        return "", 204
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflow/comments/<string:comment_id>/resolve")
@@ -199,22 +344,25 @@ class WorkflowCommentResolveApi(Resource):
     @console_ns.doc("resolve_workflow_comment")
     @console_ns.doc(description="Resolve a workflow comment")
     @console_ns.doc(params={"app_id": "Application ID", "comment_id": "Comment ID"})
-    @console_ns.response(200, "Comment resolved successfully", workflow_comment_resolve_model)
+    @console_ns.response(200, "Comment resolved successfully", console_ns.models[WorkflowCommentResolve.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    @marshal_with(workflow_comment_resolve_model)
-    def post(self, app_model: App, comment_id: str):
+    def post(self, current_tenant_id: str, current_user: Account, app_model: App, comment_id: str):
         """Resolve a workflow comment."""
         comment = WorkflowCommentService.resolve_comment(
-            tenant_id=current_user.current_tenant_id,
+            tenant_id=current_tenant_id,
             app_id=app_model.id,
             comment_id=comment_id,
             user_id=current_user.id,
         )
 
-        return comment
+        return dump_response(WorkflowCommentResolve, comment)
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflow/comments/<string:comment_id>/replies")
@@ -224,21 +372,24 @@ class WorkflowCommentReplyApi(Resource):
     @console_ns.doc("create_workflow_comment_reply")
     @console_ns.doc(description="Add a reply to a workflow comment")
     @console_ns.doc(params={"app_id": "Application ID", "comment_id": "Comment ID"})
-    @console_ns.expect(console_ns.models[WorkflowCommentReplyCreatePayload.__name__])
-    @console_ns.response(201, "Reply created successfully", workflow_comment_reply_create_model)
+    @console_ns.expect(console_ns.models[WorkflowCommentReplyPayload.__name__])
+    @console_ns.response(201, "Reply created successfully", console_ns.models[WorkflowCommentReplyCreate.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    @marshal_with(workflow_comment_reply_create_model)
-    def post(self, app_model: App, comment_id: str):
+    def post(self, current_tenant_id: str, current_user: Account, app_model: App, comment_id: str):
         """Add a reply to a workflow comment."""
         # Validate comment access first
         WorkflowCommentService.validate_comment_access(
-            comment_id=comment_id, tenant_id=current_user.current_tenant_id, app_id=app_model.id
+            comment_id=comment_id, tenant_id=current_tenant_id, app_id=app_model.id
         )
 
-        payload = WorkflowCommentReplyCreatePayload.model_validate(console_ns.payload or {})
+        payload = WorkflowCommentReplyPayload.model_validate(console_ns.payload or {})
 
         result = WorkflowCommentService.create_reply(
             comment_id=comment_id,
@@ -247,7 +398,7 @@ class WorkflowCommentReplyApi(Resource):
             mentioned_user_ids=payload.mentioned_user_ids,
         )
 
-        return result, 201
+        return dump_response(WorkflowCommentReplyCreate, result), 201
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflow/comments/<string:comment_id>/replies/<string:reply_id>")
@@ -257,30 +408,36 @@ class WorkflowCommentReplyDetailApi(Resource):
     @console_ns.doc("update_workflow_comment_reply")
     @console_ns.doc(description="Update a comment reply")
     @console_ns.doc(params={"app_id": "Application ID", "comment_id": "Comment ID", "reply_id": "Reply ID"})
-    @console_ns.expect(console_ns.models[WorkflowCommentReplyUpdatePayload.__name__])
-    @console_ns.response(200, "Reply updated successfully", workflow_comment_reply_update_model)
+    @console_ns.expect(console_ns.models[WorkflowCommentReplyPayload.__name__])
+    @console_ns.response(200, "Reply updated successfully", console_ns.models[WorkflowCommentReplyUpdate.__name__])
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    @marshal_with(workflow_comment_reply_update_model)
-    def put(self, app_model: App, comment_id: str, reply_id: str):
+    def put(self, current_tenant_id: str, current_user: Account, app_model: App, comment_id: str, reply_id: str):
         """Update a comment reply."""
         # Validate comment access first
         WorkflowCommentService.validate_comment_access(
-            comment_id=comment_id, tenant_id=current_user.current_tenant_id, app_id=app_model.id
+            comment_id=comment_id, tenant_id=current_tenant_id, app_id=app_model.id
         )
 
-        payload = WorkflowCommentReplyUpdatePayload.model_validate(console_ns.payload or {})
+        payload = WorkflowCommentReplyPayload.model_validate(console_ns.payload or {})
 
         reply = WorkflowCommentService.update_reply(
+            tenant_id=current_tenant_id,
+            app_id=app_model.id,
+            comment_id=comment_id,
             reply_id=reply_id,
             user_id=current_user.id,
             content=payload.content,
             mentioned_user_ids=payload.mentioned_user_ids,
         )
 
-        return reply
+        return dump_response(WorkflowCommentReplyUpdate, reply)
 
     @console_ns.doc("delete_workflow_comment_reply")
     @console_ns.doc(description="Delete a comment reply")
@@ -289,17 +446,27 @@ class WorkflowCommentReplyDetailApi(Resource):
     @login_required
     @setup_required
     @account_initialization_required
+    @edit_permission_required
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_EDIT)
+    @with_current_user
+    @with_current_tenant_id
     @get_app_model()
-    def delete(self, app_model: App, comment_id: str, reply_id: str):
+    def delete(self, current_tenant_id: str, current_user: Account, app_model: App, comment_id: str, reply_id: str):
         """Delete a comment reply."""
         # Validate comment access first
         WorkflowCommentService.validate_comment_access(
-            comment_id=comment_id, tenant_id=current_user.current_tenant_id, app_id=app_model.id
+            comment_id=comment_id, tenant_id=current_tenant_id, app_id=app_model.id
         )
 
-        WorkflowCommentService.delete_reply(reply_id=reply_id, user_id=current_user.id)
+        WorkflowCommentService.delete_reply(
+            tenant_id=current_tenant_id,
+            app_id=app_model.id,
+            comment_id=comment_id,
+            reply_id=reply_id,
+            user_id=current_user.id,
+        )
 
-        return {"result": "success"}, 204
+        return "", 204
 
 
 @console_ns.route("/apps/<uuid:app_id>/workflow/comments/mention-users")
@@ -309,14 +476,21 @@ class WorkflowCommentMentionUsersApi(Resource):
     @console_ns.doc("workflow_comment_mention_users")
     @console_ns.doc(description="Get all users in current tenant for mentions")
     @console_ns.doc(params={"app_id": "Application ID"})
-    @console_ns.response(200, "Mentionable users retrieved successfully", workflow_comment_mention_users_model)
+    @console_ns.response(
+        200, "Mentionable users retrieved successfully", console_ns.models[WorkflowCommentMentionUsersPayload.__name__]
+    )
     @login_required
     @setup_required
     @account_initialization_required
+    @with_current_user
+    @rbac_permission_required(RBACResourceScope.APP, RBACPermission.APP_VIEW_LAYOUT)
     @get_app_model()
-    def get(self, app_model: App):
+    def get(self, current_user: Account, app_model: App):
         """Get all users in current tenant for mentions."""
-        members = TenantService.get_tenant_members(current_user.current_tenant)
-        member_models = TypeAdapter(list[AccountWithRole]).validate_python(members, from_attributes=True)
-        response = WorkflowCommentMentionUsersResponse(users=member_models)
+        current_tenant = current_user.current_tenant  # need the tenant object here
+        if current_tenant is None:
+            raise ValueError("current tenant is required")
+        members = TenantService.get_tenant_members(current_tenant, session=db.session())
+        users = TypeAdapter(list[AccountWithRole]).validate_python(members, from_attributes=True)
+        response = WorkflowCommentMentionUsersPayload(users=users)
         return response.model_dump(mode="json"), 200

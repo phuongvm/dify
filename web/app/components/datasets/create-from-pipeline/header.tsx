@@ -1,14 +1,14 @@
+import { Button } from '@langgenius/dify-ui/button'
 import { RiArrowLeftLine } from '@remixicon/react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import Link from '@/next/link'
-import Button from '../../base/button'
 
 const Header = () => {
   const { t } = useTranslation()
 
   return (
-    <div className="relative flex px-16 pb-2 pt-5 text-text-primary system-md-semibold">
+    <div className="relative flex px-16 pt-5 pb-2 system-md-semibold text-text-primary">
       <span>{t('creation.backToKnowledge', { ns: 'datasetPipeline' })}</span>
       <Link
         className="absolute bottom-0 left-5"

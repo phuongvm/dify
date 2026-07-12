@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
+import type { AppContextStateMockState } from '@/__tests__/utils/mock-app-context-state'
 import { render } from '@testing-library/react'
-import { ToastContext } from '@/app/components/base/toast/context'
-import { useAppContext } from '@/context/app-context'
 import EditWorkspaceModal from '../index'
 
 type DialogProps = {
@@ -11,8 +10,12 @@ type DialogProps = {
 }
 
 let latestOnOpenChange: DialogProps['onOpenChange']
+const mockAppContextState = vi.hoisted(() => ({
+  current: {} as Partial<AppContextStateMockState>,
+}))
+const mockUseAppContext = vi.hoisted(() => vi.fn())
 
-vi.mock('@/app/components/base/ui/dialog', () => ({
+vi.mock('@langgenius/dify-ui/dialog', () => ({
   Dialog: ({ children, onOpenChange }: DialogProps) => {
     latestOnOpenChange = onOpenChange
     return <div data-testid="dialog">{children}</div>
@@ -26,27 +29,51 @@ vi.mock('@/app/components/base/ui/dialog', () => ({
   ),
 }))
 
-vi.mock('@/context/app-context', () => ({
-  useAppContext: vi.fn(),
-}))
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
 
 describe('EditWorkspaceModal dialog lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     latestOnOpenChange = undefined
-    vi.mocked(useAppContext).mockReturnValue({
+    const appContextValue = {
       currentWorkspace: { name: 'Test Workspace' },
       isCurrentWorkspaceOwner: true,
-    } as never)
+    } as never
+    mockAppContextState.current = appContextValue
+    mockUseAppContext.mockReturnValue(appContextValue)
   })
 
   it('should only call onCancel when the dialog requests closing', () => {
     const onCancel = vi.fn()
 
     render(
-      <ToastContext.Provider value={{ notify: vi.fn(), close: vi.fn() }}>
+      <>
         <EditWorkspaceModal onCancel={onCancel} />
-      </ToastContext.Provider>,
+      </>,
     )
 
     latestOnOpenChange?.(true)

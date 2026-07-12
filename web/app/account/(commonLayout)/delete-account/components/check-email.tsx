@@ -1,9 +1,10 @@
 'use client'
+import { Button } from '@langgenius/dify-ui/button'
+import { Input } from '@langgenius/dify-ui/input'
+import { useAtomValue } from 'jotai'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import Button from '@/app/components/base/button'
-import Input from '@/app/components/base/input'
-import { useAppContext } from '@/context/app-context'
+import { userProfileEmailAtom } from '@/context/account-state'
 import Link from '@/next/link'
 import { useSendDeleteAccountEmail } from '../state'
 
@@ -14,7 +15,7 @@ type DeleteAccountProps = {
 
 export default function CheckEmail(props: DeleteAccountProps) {
   const { t } = useTranslation()
-  const { userProfile } = useAppContext()
+  const userProfileEmail = useAtomValue(userProfileEmailAtom)
   const [userInputEmail, setUserInputEmail] = useState('')
 
   const { isPending: isSendingEmail, mutateAsync: getDeleteEmailVerifyCode } = useSendDeleteAccountEmail()
@@ -30,14 +31,14 @@ export default function CheckEmail(props: DeleteAccountProps) {
 
   return (
     <>
-      <div className="py-1 text-text-destructive body-md-medium">
+      <div className="py-1 body-md-medium text-text-destructive">
         {t('account.deleteTip', { ns: 'common' })}
       </div>
-      <div className="pb-2 pt-1 text-text-secondary body-md-regular">
+      <div className="pt-1 pb-2 body-md-regular text-text-secondary">
         {t('account.deletePrivacyLinkTip', { ns: 'common' })}
         <Link href="https://dify.ai/privacy" className="text-text-accent">{t('account.deletePrivacyLink', { ns: 'common' })}</Link>
       </div>
-      <label className="mb-1 mt-3 flex h-6 items-center text-text-secondary system-sm-semibold">{t('account.deleteLabel', { ns: 'common' })}</label>
+      <label className="mt-3 mb-1 flex h-6 items-center system-sm-semibold text-text-secondary">{t('account.deleteLabel', { ns: 'common' })}</label>
       <Input
         placeholder={t('account.deletePlaceholder', { ns: 'common' }) as string}
         onChange={(e) => {
@@ -45,7 +46,7 @@ export default function CheckEmail(props: DeleteAccountProps) {
         }}
       />
       <div className="mt-3 flex w-full flex-col gap-2">
-        <Button className="w-full" disabled={userInputEmail !== userProfile.email || isSendingEmail} loading={isSendingEmail} variant="primary" onClick={handleConfirm}>{t('account.sendVerificationButton', { ns: 'common' })}</Button>
+        <Button className="w-full" disabled={userInputEmail !== userProfileEmail || isSendingEmail} loading={isSendingEmail} variant="primary" onClick={handleConfirm}>{t('account.sendVerificationButton', { ns: 'common' })}</Button>
         <Button className="w-full" onClick={props.onCancel}>{t('operation.cancel', { ns: 'common' })}</Button>
       </div>
     </>

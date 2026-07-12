@@ -1,9 +1,11 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import type { UserProfile } from '@/service/workflow-comment'
+import type { UserProfile } from '@/app/components/workflow/comment/types'
+import { Avatar } from '@langgenius/dify-ui/avatar'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
 import { RiArrowUpLine, RiAtLine, RiLoader2Line } from '@remixicon/react'
-import { useParams } from 'next/navigation'
 import {
   forwardRef,
   memo,
@@ -18,11 +20,9 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import Textarea from 'react-textarea-autosize'
-import Avatar from '@/app/components/base/avatar'
-import Button from '@/app/components/base/button'
-import { EnterKey } from '@/app/components/base/icons/src/public/common'
-import { fetchMentionableUsers } from '@/service/workflow-comment'
-import { cn } from '@/utils/classnames'
+import EnterKey from '@/app/components/base/icons/src/public/common/EnterKey'
+import { useParams } from '@/next/navigation'
+import { consoleClient } from '@/service/client'
 import { useStore, useWorkflowStore } from '../store'
 
 type MentionInputProps = {
@@ -37,6 +37,8 @@ type MentionInputProps = {
   isEditing?: boolean
   autoFocus?: boolean
 }
+
+const EMPTY_USERS: UserProfile[] = []
 
 const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
   value,
@@ -58,35 +60,15 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
   const actionContainerRef = useRef<HTMLDivElement | null>(null)
   const actionRightRef = useRef<HTMLDivElement | null>(null)
   const baseTextareaHeightRef = useRef<number | null>(null)
-  const mentionTimerRef = useRef<number | null>(null)
-  const focusTimerRef = useRef<number | null>(null)
-  const layoutRafRef = useRef<number | null>(null)
 
   // Expose textarea ref to parent component
   useImperativeHandle(forwardedRef, () => textareaRef.current!, [])
-
-  useEffect(() => {
-    return () => {
-      if (mentionTimerRef.current !== null) {
-        window.clearTimeout(mentionTimerRef.current)
-        mentionTimerRef.current = null
-      }
-      if (focusTimerRef.current !== null) {
-        window.clearTimeout(focusTimerRef.current)
-        focusTimerRef.current = null
-      }
-      if (layoutRafRef.current !== null) {
-        window.cancelAnimationFrame(layoutRafRef.current)
-        layoutRafRef.current = null
-      }
-    }
-  }, [])
 
   const workflowStore = useWorkflowStore()
   const mentionUsersFromStore = useStore(state => (
     appId ? state.mentionableUsersCache[appId] : undefined
   ))
-  const mentionUsers = useMemo(() => mentionUsersFromStore ?? [], [mentionUsersFromStore])
+  const mentionUsers = useMemo(() => mentionUsersFromStore ?? EMPTY_USERS, [mentionUsersFromStore])
 
   const [showMentionDropdown, setShowMentionDropdown] = useState(false)
   const [mentionQuery, setMentionQuery] = useState('')
@@ -131,7 +113,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
           continue
 
         const previousChar = searchStart > 0 ? value[searchStart - 1] : ''
-        if (searchStart > 0 && !/\s/.test(previousChar))
+        if (searchStart > 0 && !/\s/.test(previousChar!))
           continue
 
         if (
@@ -183,8 +165,10 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
 
     state.setMentionableUsersLoading(appId, true)
     try {
-      const users = await fetchMentionableUsers(appId)
-      workflowStore.getState().setMentionableUsersCache(appId, users)
+      const response = await consoleClient.apps.byAppId.workflow.comments.mentionUsers.get({
+        params: { app_id: appId },
+      })
+      workflowStore.getState().setMentionableUsersCache(appId, response.users)
     }
     catch (error) {
       console.error('Failed to load mentionable users:', error)
@@ -248,17 +232,6 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
     setPaddingRight(prev => (prev === nextRight ? prev : nextRight))
     setPaddingBottom(prev => (prev === nextBottom ? prev : nextBottom))
   }, [shouldReserveButtonGap, shouldReserveHorizontalSpace, paddingRight, paddingBottom])
-
-  const scheduleLayoutSync = useCallback(() => {
-    if (typeof window === 'undefined')
-      return
-    if (layoutRafRef.current !== null)
-      window.cancelAnimationFrame(layoutRafRef.current)
-    layoutRafRef.current = window.requestAnimationFrame(() => {
-      evaluateContentLayout()
-      syncHighlightScroll()
-    })
-  }, [evaluateContentLayout, syncHighlightScroll])
 
   const setActionContainerRef = useCallback((node: HTMLDivElement | null) => {
     actionContainerRef.current = node
@@ -357,15 +330,13 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
   const handleContentChange = useCallback((newValue: string) => {
     onChange(newValue)
 
-    if (mentionTimerRef.current !== null)
-      window.clearTimeout(mentionTimerRef.current)
-    mentionTimerRef.current = window.setTimeout(() => {
+    setTimeout(() => {
       const cursorPosition = textareaRef.current?.selectionStart || 0
       const textBeforeCursor = newValue.slice(0, cursorPosition)
       const mentionMatch = textBeforeCursor.match(/@(\w*)$/)
 
       if (mentionMatch) {
-        setMentionQuery(mentionMatch[1])
+        setMentionQuery(mentionMatch[1]!)
         setMentionPosition(cursorPosition - mentionMatch[0].length)
         setShowMentionDropdown(true)
         setSelectedMentionIndex(0)
@@ -374,9 +345,14 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
         setShowMentionDropdown(false)
       }
 
-      scheduleLayoutSync()
+      if (typeof window !== 'undefined') {
+        window.requestAnimationFrame(() => {
+          evaluateContentLayout()
+          syncHighlightScroll()
+        })
+      }
     }, 0)
-  }, [onChange, scheduleLayoutSync])
+  }, [onChange, evaluateContentLayout, syncHighlightScroll])
 
   const handleMentionButtonClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -399,9 +375,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
 
     onChange(newContent)
 
-    if (mentionTimerRef.current !== null)
-      window.clearTimeout(mentionTimerRef.current)
-    mentionTimerRef.current = window.setTimeout(() => {
+    setTimeout(() => {
       const newCursorPos = cursorPosition + 1
       textarea.setSelectionRange(newCursorPos, newCursorPos)
       textarea.focus()
@@ -411,9 +385,14 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
       setShowMentionDropdown(true)
       setSelectedMentionIndex(0)
 
-      scheduleLayoutSync()
+      if (typeof window !== 'undefined') {
+        window.requestAnimationFrame(() => {
+          evaluateContentLayout()
+          syncHighlightScroll()
+        })
+      }
     }, 0)
-  }, [value, onChange, scheduleLayoutSync, showMentionDropdown])
+  }, [value, onChange, evaluateContentLayout, syncHighlightScroll, showMentionDropdown])
 
   const insertMention = useCallback((user: UserProfile) => {
     const textarea = textareaRef.current
@@ -423,7 +402,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
     const beforeMention = value.slice(0, mentionPosition)
     const afterMention = value.slice(textarea.selectionStart || 0)
 
-    const needsSpaceBefore = mentionPosition > 0 && !/\s/.test(value[mentionPosition - 1])
+    const needsSpaceBefore = mentionPosition > 0 && !/\s/.test(value[mentionPosition - 1]!)
     const prefix = needsSpaceBefore ? ' ' : ''
     const newContent = `${beforeMention}${prefix}@${user.name} ${afterMention}`
 
@@ -433,16 +412,19 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
     const newMentionedUserIds = [...mentionedUserIds, user.id]
     setMentionedUserIds(newMentionedUserIds)
 
-    if (mentionTimerRef.current !== null)
-      window.clearTimeout(mentionTimerRef.current)
-    mentionTimerRef.current = window.setTimeout(() => {
+    setTimeout(() => {
       const extraSpace = needsSpaceBefore ? 1 : 0
       const newCursorPos = mentionPosition + extraSpace + user.name.length + 2 // (space) + @ + name + space
       textarea.setSelectionRange(newCursorPos, newCursorPos)
       textarea.focus()
-      scheduleLayoutSync()
+      if (typeof window !== 'undefined') {
+        window.requestAnimationFrame(() => {
+          evaluateContentLayout()
+          syncHighlightScroll()
+        })
+      }
     }, 0)
-  }, [value, mentionPosition, onChange, mentionedUserIds, scheduleLayoutSync])
+  }, [value, mentionPosition, onChange, mentionedUserIds, evaluateContentLayout, syncHighlightScroll])
 
   const handleSubmit = useCallback(async (e?: React.MouseEvent) => {
     if (e) {
@@ -517,16 +499,17 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
   }, [value, resetMentionState])
 
   useEffect(() => {
-    if (autoFocus && textareaRef.current) {
-      const textarea = textareaRef.current
-      if (focusTimerRef.current !== null)
-        window.clearTimeout(focusTimerRef.current)
-      focusTimerRef.current = window.setTimeout(() => {
-        textarea.focus()
-        const length = textarea.value.length
-        textarea.setSelectionRange(length, length)
-      }, 0)
-    }
+    if (!autoFocus || !textareaRef.current)
+      return
+
+    const textarea = textareaRef.current
+    const timeout = window.setTimeout(() => {
+      textarea.focus()
+      const length = textarea.value.length
+      textarea.setSelectionRange(length, length)
+    }, 0)
+
+    return () => window.clearTimeout(timeout)
   }, [autoFocus])
 
   return (
@@ -535,8 +518,8 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
         <div
           aria-hidden
           className={cn(
-            'pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words p-1 leading-6',
-            'text-text-primary body-lg-regular',
+            'pointer-events-none absolute inset-0 z-0 overflow-hidden p-1 leading-6 wrap-break-word whitespace-pre-wrap',
+            'body-lg-regular text-text-primary',
           )}
           style={{ paddingRight, paddingBottom }}
         >
@@ -552,7 +535,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
         <Textarea
           ref={textareaRef}
           className={cn(
-            'relative z-10 w-full resize-none bg-transparent p-1 leading-6 text-transparent caret-primary-500 outline-none body-lg-regular',
+            'relative z-10 w-full resize-none bg-transparent p-1 body-lg-regular leading-6 text-transparent caret-primary-500 outline-hidden',
             'placeholder:text-text-tertiary',
           )}
           style={{ paddingRight, paddingBottom }}
@@ -570,18 +553,18 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
         {!isEditing && (
           <div
             ref={setActionContainerRef}
-            className="absolute bottom-0 right-1 z-20 flex items-end gap-1"
+            className="absolute right-1 bottom-0 z-20 flex items-end gap-1"
           >
             <div
               className={cn(
-                'z-20 flex h-8 w-8 items-center justify-center rounded-lg transition-opacity',
+                'z-20 flex size-8 items-center justify-center rounded-lg transition-opacity',
                 shouldDisableMentionButton
                   ? 'cursor-not-allowed opacity-40'
                   : 'cursor-pointer hover:bg-state-base-hover',
               )}
               onClick={shouldDisableMentionButton ? undefined : handleMentionButtonClick}
             >
-              <RiAtLine className="h-4 w-4 text-text-tertiary" />
+              <RiAtLine className="size-4 text-text-tertiary" />
             </div>
             <Button
               className="z-20 ml-2 w-8 px-0"
@@ -590,8 +573,8 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
               onClick={handleSubmit}
             >
               {loading
-                ? <RiLoader2Line className="h-4 w-4 animate-spin text-components-button-primary-text" />
-                : <RiArrowUpLine className="h-4 w-4 text-components-button-primary-text" />}
+                ? <RiLoader2Line className="size-4 animate-spin text-components-button-primary-text" />
+                : <RiArrowUpLine className="size-4 text-components-button-primary-text" />}
             </Button>
           </div>
         )}
@@ -599,18 +582,18 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
         {isEditing && (
           <div
             ref={setActionContainerRef}
-            className="absolute bottom-0 left-1 right-1 z-20 flex items-end justify-between"
+            className="absolute inset-x-1 bottom-0 z-20 flex items-end justify-between"
           >
             <div
               className={cn(
-                'z-20 flex h-8 w-8 items-center justify-center rounded-lg transition-opacity',
+                'z-20 flex size-8 items-center justify-center rounded-lg transition-opacity',
                 shouldDisableMentionButton
                   ? 'cursor-not-allowed opacity-40'
                   : 'cursor-pointer hover:bg-state-base-hover',
               )}
               onClick={shouldDisableMentionButton ? undefined : handleMentionButtonClick}
             >
-              <RiAtLine className="h-4 w-4 text-text-tertiary" />
+              <RiAtLine className="size-4 text-text-tertiary" />
             </div>
             <div
               ref={setActionRightRef}
@@ -626,10 +609,10 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
                 onClick={() => handleSubmit()}
                 className="gap-1"
               >
-                {loading && <RiLoader2Line className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                {loading && <RiLoader2Line className="mr-1 size-3.5 animate-spin" />}
                 <span>{t('operation.save', { ns: 'common' })}</span>
                 {!loading && (
-                  <EnterKey className="h-4 w-4" />
+                  <EnterKey className="size-4" />
                 )}
               </Button>
             </div>
@@ -639,7 +622,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
 
       {showMentionDropdown && filteredMentionUsers.length > 0 && typeof document !== 'undefined' && createPortal(
         <div
-          className="bg-components-panel-bg/95 fixed z-[9999] max-h-[248px] w-[280px] overflow-y-auto rounded-xl border-[0.5px] border-components-panel-border shadow-lg backdrop-blur-[10px]"
+          className="fixed z-9999 max-h-[248px] w-[280px] overflow-y-auto rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg/95 shadow-lg backdrop-blur-[10px]"
           style={{
             left: dropdownPosition.x,
             [dropdownPosition.placement === 'top' ? 'bottom' : 'top']: dropdownPosition.placement === 'top'
@@ -652,7 +635,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
             <div
               key={user.id}
               className={cn(
-                'flex cursor-pointer items-center gap-2 rounded-md py-1 pl-2 pr-3 hover:bg-state-base-hover',
+                'flex cursor-pointer items-center gap-2 rounded-md py-1 pr-3 pl-2 hover:bg-state-base-hover',
                 index === selectedMentionIndex && 'bg-state-base-hover',
               )}
               onClick={() => insertMention(user)}
@@ -660,7 +643,7 @@ const MentionInputInner = forwardRef<HTMLTextAreaElement, MentionInputProps>(({
               <Avatar
                 avatar={user.avatar_url || null}
                 name={user.name}
-                size={24}
+                size="sm"
                 className="shrink-0"
               />
               <div className="min-w-0 flex-1">

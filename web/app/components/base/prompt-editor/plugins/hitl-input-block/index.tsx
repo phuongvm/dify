@@ -1,5 +1,4 @@
 import type { HITLInputBlockType } from '../../types'
-import type { UpdateWorkflowNodesMapPayload } from '../workflow-variable-block'
 import type {
   HITLNodeProps,
 } from './node'
@@ -7,6 +6,7 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import { mergeRegister } from '@lexical/utils'
 import {
   $insertNodes,
+  $nodesOfType,
   COMMAND_PRIORITY_EDITOR,
   createCommand,
 } from 'lexical'
@@ -15,7 +15,7 @@ import {
   useEffect,
 } from 'react'
 import { CustomTextNode } from '../custom-text/node'
-import { UPDATE_WORKFLOW_NODES_MAP } from '../workflow-variable-block'
+import { UPDATE_WORKFLOW_NODES_MAP as WORKFLOW_UPDATE_WORKFLOW_NODES_MAP } from '../workflow-variable-block'
 import {
   $createHITLInputNode,
   HITLInputNode,
@@ -23,16 +23,13 @@ import {
 
 export const INSERT_HITL_INPUT_BLOCK_COMMAND = createCommand('INSERT_HITL_INPUT_BLOCK_COMMAND')
 export const DELETE_HITL_INPUT_BLOCK_COMMAND = createCommand('DELETE_HITL_INPUT_BLOCK_COMMAND')
+export const UPDATE_WORKFLOW_NODES_MAP = WORKFLOW_UPDATE_WORKFLOW_NODES_MAP
 
-export type HITLInputProps = {
-  onInsert?: () => void
-  onDelete?: () => void
-}
 const HITLInputBlock = memo(({
   onInsert,
   onDelete,
-  workflowNodesMap,
-  variables,
+  workflowNodesMap = {},
+  variables: workflowAvailableVariables,
   getVarType,
   readonly,
 }: HITLInputBlockType) => {
@@ -40,13 +37,20 @@ const HITLInputBlock = memo(({
 
   useEffect(() => {
     editor.update(() => {
-      const payload: UpdateWorkflowNodesMapPayload = {
+      editor.dispatchCommand(UPDATE_WORKFLOW_NODES_MAP, {
         workflowNodesMap: workflowNodesMap || {},
-        nodeOutputVars: variables || [],
-      }
-      editor.dispatchCommand(UPDATE_WORKFLOW_NODES_MAP, payload)
+        availableVariables: workflowAvailableVariables || [],
+      })
     })
-  }, [editor, workflowNodesMap, variables])
+  }, [editor, workflowNodesMap, workflowAvailableVariables])
+
+  useEffect(() => {
+    editor.update(() => {
+      $nodesOfType(HITLInputNode).forEach((node) => {
+        node.setReadonly(readonly)
+      })
+    })
+  }, [editor, readonly])
 
   useEffect(() => {
     if (!editor.hasNodes([HITLInputNode]))
@@ -72,7 +76,6 @@ const HITLInputBlock = memo(({
             onFormInputItemRemove,
             workflowNodesMap,
             getVarType,
-            variables,
             undefined,
             undefined,
             undefined,
@@ -101,7 +104,7 @@ const HITLInputBlock = memo(({
         COMMAND_PRIORITY_EDITOR,
       ),
     )
-  }, [editor, onInsert, onDelete, workflowNodesMap, getVarType, variables, readonly])
+  }, [editor, onInsert, onDelete, workflowNodesMap, getVarType, readonly])
 
   return null
 })

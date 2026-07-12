@@ -1,4 +1,4 @@
-import type { LoroDoc } from 'loro-crdt'
+import type { LoroDoc } from 'loro-crdt/base64'
 import type { Socket } from 'socket.io-client'
 import { CRDTProvider } from '../crdt-provider'
 
@@ -100,7 +100,7 @@ describe('CRDTProvider', () => {
     socket.trigger('graph_update', payload)
 
     expect(doc.import).toHaveBeenCalledWith(expect.any(Uint8Array))
-    expect(Array.from(doc.import.mock.calls[0][0])).toEqual([9, 9, 9])
+    expect(Array.from(doc.import.mock.calls[0]![0])).toEqual([9, 9, 9])
     provider.destroy()
   })
 

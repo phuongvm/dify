@@ -10,8 +10,6 @@ import {
 
 const NAME_SPACE = 'embedding'
 
-export type EmbeddingStatusType = 'indexing' | 'splitting' | 'parsing' | 'cleaning' | 'completed' | 'paused' | 'error' | 'waiting' | ''
-
 const EMBEDDING_STATUSES = ['indexing', 'splitting', 'parsing', 'cleaning'] as const
 const TERMINAL_STATUSES = ['completed', 'error', 'paused'] as const
 
@@ -130,20 +128,4 @@ export const useResumeIndexing = ({ datasetId, documentId, onSuccess, onError }:
     onSuccess,
     onError,
   })
-}
-
-export const useInvalidateEmbeddingStatus = () => {
-  const queryClient = useQueryClient()
-  return useCallback((datasetId?: string, documentId?: string) => {
-    if (datasetId && documentId) {
-      queryClient.invalidateQueries({
-        queryKey: [NAME_SPACE, 'indexing-status', datasetId, documentId],
-      })
-    }
-    else {
-      queryClient.invalidateQueries({
-        queryKey: [NAME_SPACE, 'indexing-status'],
-      })
-    }
-  }, [queryClient])
 }

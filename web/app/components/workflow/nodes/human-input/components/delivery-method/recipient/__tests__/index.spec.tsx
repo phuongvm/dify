@@ -4,26 +4,51 @@ import Recipient from '../index'
 const mockUseTranslation = vi.hoisted(() => vi.fn())
 const mockUseAppContext = vi.hoisted(() => vi.fn())
 const mockUseMembers = vi.hoisted(() => vi.fn())
+const mockAppContextState = vi.hoisted(() => ({
+  userProfile: { email: 'owner@example.com' },
+  currentWorkspace: { name: 'Dify\'s Lab' },
+}))
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => mockUseTranslation(),
 }))
 
-vi.mock('@/context/app-context', () => ({
-  useAppContext: () => mockUseAppContext(),
-}))
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
 
 vi.mock('@/service/use-common', () => ({
   useMembers: () => mockUseMembers(),
 }))
 
-vi.mock('@/app/components/base/switch', () => ({
-  __esModule: true,
-  default: (props: {
-    value: boolean
-    onChange: (value: boolean) => void
+vi.mock('@langgenius/dify-ui/switch', () => ({
+  Switch: (props: {
+    checked: boolean
+    onCheckedChange: (value: boolean) => void
   }) => (
-    <button type="button" onClick={() => props.onChange(!props.value)}>
+    <button type="button" onClick={() => props.onCheckedChange(!props.checked)}>
       toggle-workspace
     </button>
   ),
@@ -70,10 +95,7 @@ describe('Recipient', () => {
     mockUseTranslation.mockReturnValue({
       t: (key: string, options?: { workspaceName?: string }) => options?.workspaceName ?? key,
     })
-    mockUseAppContext.mockReturnValue({
-      userProfile: { email: 'owner@example.com' },
-      currentWorkspace: { name: 'Dify\'s Lab' },
-    })
+    mockUseAppContext.mockReturnValue(mockAppContextState)
     mockUseMembers.mockReturnValue({
       data: {
         accounts: [

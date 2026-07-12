@@ -39,13 +39,14 @@ export const useCollaborativeWorkflow = () => {
   const store = useStoreApi()
   const { setNodes: collabSetNodes, setEdges: collabSetEdges } = collaborationManager
 
-  const setNodes = useCallback((newNodes: Node[], shouldBroadcast: boolean = true) => {
+  const setNodes = useCallback((newNodes: Node[], shouldBroadcast: boolean = true, source = 'use-collaborative-workflow:setNodes') => {
     const { getNodes, setNodes: reactFlowSetNodes } = store.getState()
     if (shouldBroadcast) {
       const oldNodes = getNodes()
       collabSetNodes(
         oldNodes.map(sanitizeNodeForBroadcast),
         newNodes.map(sanitizeNodeForBroadcast),
+        source,
       )
     }
     reactFlowSetNodes(newNodes)
@@ -80,5 +81,5 @@ export const useCollaborativeWorkflow = () => {
     getState: collaborativeStore,
     setNodes,
     setEdges,
-  }), [collaborativeStore, setNodes, setEdges])
+  }), [collaborativeStore, setEdges, setNodes])
 }

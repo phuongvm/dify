@@ -1,4 +1,3 @@
-import type { CodeNodeType, OutputVar } from '../nodes/code/types'
 import type { IterationNodeType } from '../nodes/iteration/types'
 import type { LoopNodeType } from '../nodes/loop/types'
 import type {
@@ -16,67 +15,18 @@ import {
   LOOP_CHILDREN_Z_INDEX,
   LOOP_NODE_Z_INDEX,
 } from '../constants'
+import { isAgentV2NodeData } from '../nodes/agent-v2/types'
 import { CUSTOM_ITERATION_START_NODE } from '../nodes/iteration-start/constants'
 import { CUSTOM_LOOP_START_NODE } from '../nodes/loop-start/constants'
 import {
   BlockEnum,
 } from '../types'
 
-type MergeNodeDefaultDataParams<T extends CommonNodeType<Record<string, unknown>>> = {
-  nodeType: BlockEnum
-  metaDefault?: Partial<T>
-  appDefault?: Partial<T>
-  baseData?: Partial<T>
-  overrideData?: Partial<T>
+export function getNodeCatalogType(data: CommonNodeType): BlockEnum {
+  return isAgentV2NodeData(data) ? BlockEnum.AgentV2 : data.type
 }
 
-const pickNonEmptyArray = <T>(value?: T[]) => {
-  return Array.isArray(value) && value.length > 0 ? value : undefined
-}
-
-export const mergeNodeDefaultData = <T extends CommonNodeType<Record<string, unknown>>>({
-  nodeType,
-  metaDefault,
-  appDefault,
-  baseData,
-  overrideData,
-}: MergeNodeDefaultDataParams<T>) => {
-  const merged = {
-    ...(metaDefault || {}),
-    ...(appDefault || {}),
-    ...(baseData || {}),
-    ...(overrideData || {}),
-  } as Partial<T>
-
-  if (nodeType === BlockEnum.Code) {
-    const codeMetaDefault = (metaDefault || {}) as Partial<CodeNodeType>
-    const codeAppDefault = (appDefault || {}) as Partial<CodeNodeType>
-    const codeBase = (baseData || {}) as Partial<CodeNodeType>
-    const codeOverride = (overrideData || {}) as Partial<CodeNodeType>
-    const codeDefaults = {
-      ...codeMetaDefault,
-      ...codeAppDefault,
-    }
-
-    const outputs: OutputVar = {
-      ...(codeDefaults.outputs || {}),
-      ...(codeBase.outputs || {}),
-      ...(codeOverride.outputs || {}),
-    }
-    if (Object.keys(outputs).length > 0)
-      (merged as Partial<CodeNodeType>).outputs = outputs
-
-    const resolvedVariables = pickNonEmptyArray(codeBase.variables)
-      ?? pickNonEmptyArray(codeOverride.variables)
-      ?? pickNonEmptyArray(codeDefaults.variables)
-    if (resolvedVariables)
-      (merged as Partial<CodeNodeType>).variables = resolvedVariables
-  }
-
-  return merged
-}
-
-export function generateNewNode<T = {}>({ data, position, id, zIndex, type, ...rest }: Omit<Node<T>, 'id'> & { id?: string }): {
+export function generateNewNode({ data, position, id, zIndex, type, ...rest }: Omit<Node, 'id'> & { id?: string }): {
   newNode: Node
   newIterationStartNode?: Node
   newLoopStartNode?: Node
@@ -165,7 +115,7 @@ export const genNewNodeTitleFromOld = (oldTitle: string) => {
 
   if (match) {
     const title = match[1]
-    const num = Number.parseInt(match[2], 10)
+    const num = Number.parseInt(match[2]!, 10)
     return `${title} (${num + 1})`
   }
   else {
@@ -196,6 +146,26 @@ export const getNestedNodePosition = (node: Node, parentNode: Node) => {
     x: node.position.x - parentNode.position.x,
     y: node.position.y - parentNode.position.y,
   }
+}
+
+export const getNodesWithSameDefaultDataType = (
+  nodes: Node[],
+  nodeType: BlockEnum,
+  defaultValue: Partial<Node['data']>,
+) => {
+  const dataType = (defaultValue.type as BlockEnum | undefined) ?? nodeType
+  const discriminatorEntries = (['agent_node_kind', 'version'] as const)
+    .map(key => [key, (defaultValue as Record<string, unknown>)[key]] as const)
+    .filter(([, value]) => value !== undefined)
+
+  if (dataType !== nodeType && discriminatorEntries.length > 0) {
+    return nodes.filter(node =>
+      node.data.type === dataType
+      && discriminatorEntries.every(([key, value]) => (node.data as Record<string, unknown>)[key] === value),
+    )
+  }
+
+  return nodes.filter(node => node.data.type === dataType)
 }
 
 export const hasRetryNode = (nodeType?: BlockEnum) => {

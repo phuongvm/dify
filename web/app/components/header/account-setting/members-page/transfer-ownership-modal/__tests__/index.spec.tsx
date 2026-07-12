@@ -1,17 +1,57 @@
-import type { AppContextValue } from '@/context/app-context'
+import type { AppContextStateMockState } from '@/__tests__/utils/mock-app-context-state'
 import type { ICurrentWorkspace } from '@/models/common'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
-import { ToastContext } from '@/app/components/base/toast/context'
-import { useAppContext } from '@/context/app-context'
 import { ownershipTransfer, sendOwnerEmail, verifyOwnerEmail } from '@/service/common'
 import { useMembers } from '@/service/use-common'
 import TransferOwnershipModal from '../index'
 
-vi.mock('@/context/app-context')
+const toastMocks = vi.hoisted(() => ({
+  mockNotify: vi.fn(),
+}))
+const mockAppContextState = vi.hoisted(() => ({
+  current: {} as Partial<AppContextStateMockState>,
+}))
+const mockUseAppContext = vi.hoisted(() => vi.fn())
+
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState.current)
+})
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
 vi.mock('@/service/common')
 vi.mock('@/service/use-common')
+vi.mock('@langgenius/dify-ui/toast', () => ({
+  default: {
+    notify: (args: unknown) => toastMocks.mockNotify(args),
+  },
+  toast: {
+    success: (message: string) => toastMocks.mockNotify({ type: 'success', message }),
+    error: (message: string) => toastMocks.mockNotify({ type: 'error', message }),
+    warning: (message: string) => toastMocks.mockNotify({ type: 'warning', message }),
+    info: (message: string) => toastMocks.mockNotify({ type: 'info', message }),
+  },
+}))
 
 vi.mock('../member-selector', () => ({
   default: ({ onSelect }: { onSelect: (id: string) => void }) => (
@@ -21,15 +61,17 @@ vi.mock('../member-selector', () => ({
 
 describe('TransferOwnershipModal', () => {
   const mockOnClose = vi.fn()
-  const mockNotify = vi.fn()
+  const { mockNotify } = toastMocks
 
   beforeEach(() => {
     vi.clearAllMocks()
 
-    vi.mocked(useAppContext).mockReturnValue({
+    const appContextValue = {
       currentWorkspace: { name: 'Test Workspace' } as ICurrentWorkspace,
       userProfile: { email: 'owner@example.com', id: 'owner-id' },
-    } as unknown as AppContextValue)
+    } as unknown as AppContextStateMockState
+    mockAppContextState.current = appContextValue
+    mockUseAppContext.mockReturnValue(appContextValue)
 
     vi.mocked(useMembers).mockReturnValue({
       data: { accounts: [] },
@@ -52,9 +94,9 @@ describe('TransferOwnershipModal', () => {
   })
 
   const renderModal = () => render(
-    <ToastContext.Provider value={{ notify: mockNotify, close: vi.fn() }}>
+    <>
       <TransferOwnershipModal show onClose={mockOnClose} />
-    </ToastContext.Provider>,
+    </>,
   )
 
   const mockEmailVerification = ({
@@ -76,7 +118,7 @@ describe('TransferOwnershipModal', () => {
   }
 
   const goToTransferStep = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByTestId('transfer-modal-send-code'))
+    await user.click(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i }))
     const input = await screen.findByTestId('transfer-modal-code-input')
     await user.type(input, '123456')
     await user.click(screen.getByTestId('transfer-modal-continue'))
@@ -112,7 +154,7 @@ describe('TransferOwnershipModal', () => {
     renderModal()
     // Trigger the email send (which starts the timer)
     await act(async () => {
-      fireEvent.click(screen.getByTestId('transfer-modal-send-code'))
+      fireEvent.click(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i }))
     })
 
     // Step Verify shows up
@@ -130,7 +172,7 @@ describe('TransferOwnershipModal', () => {
     })
     expect(screen.queryByText(/members\.transferModal\.resendCount/i)).not.toBeInTheDocument()
 
-    const resendBtn = screen.getByTestId('transfer-modal-resend')
+    const resendBtn = screen.getByRole('button', { name: /members\.transferModal\.resend/i })
     await act(async () => {
       fireEvent.click(resendBtn)
     })
@@ -169,18 +211,20 @@ describe('TransferOwnershipModal', () => {
     })
   })
 
-  it('should show error when sending verification email fails', async () => {
+  it('should not show a modal-level toast and should stay on start step when sending verification email fails', async () => {
     const user = userEvent.setup()
     vi.mocked(sendOwnerEmail).mockRejectedValue(new Error('network error'))
     renderModal()
-    await user.click(screen.getByTestId('transfer-modal-send-code'))
+    await user.click(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i }))
 
+    // The base service layer surfaces the real backend error. The modal itself
+    // must NOT show an additional toast (e.g. "Error sending verification code: undefined").
     await waitFor(() => {
-      expect(mockNotify).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'error',
-        message: expect.stringContaining('network error'),
-      }))
+      expect(sendOwnerEmail).toHaveBeenCalled()
     })
+    expect(mockNotify).not.toHaveBeenCalled()
+    // Should remain on the start step instead of advancing to the verify step.
+    expect(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i })).toBeInTheDocument()
   })
 
   it('should show error when ownership transfer fails', async () => {
@@ -207,7 +251,7 @@ describe('TransferOwnershipModal', () => {
     } as unknown as Awaited<ReturnType<typeof sendOwnerEmail>>)
 
     renderModal()
-    await user.click(screen.getByTestId('transfer-modal-send-code'))
+    await user.click(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i }))
 
     // Should advance to verify step even with null data
     await waitFor(() => {
@@ -215,19 +259,18 @@ describe('TransferOwnershipModal', () => {
     })
   })
 
-  it('should show fallback error prefix when sendOwnerEmail throws null', async () => {
+  it('should swallow null rejection from sendOwnerEmail without showing a modal-level toast', async () => {
     const user = userEvent.setup()
     vi.mocked(sendOwnerEmail).mockRejectedValue(null)
 
     renderModal()
-    await user.click(screen.getByTestId('transfer-modal-send-code'))
+    await user.click(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i }))
 
     await waitFor(() => {
-      expect(mockNotify).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'error',
-        message: expect.stringContaining('Error sending verification code:'),
-      }))
+      expect(sendOwnerEmail).toHaveBeenCalled()
     })
+    expect(mockNotify).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /members\.transferModal\.sendVerifyCode/i })).toBeInTheDocument()
   })
 
   it('should show fallback error prefix when verifyOwnerEmail throws null', async () => {
@@ -266,7 +309,7 @@ describe('TransferOwnershipModal', () => {
   it('should close when close button is clicked', async () => {
     const user = userEvent.setup()
     renderModal()
-    await user.click(screen.getByTestId('transfer-modal-close'))
+    await user.click(screen.getByRole('button', { name: /operation\.close$/ }))
     expect(mockOnClose).toHaveBeenCalled()
   })
 

@@ -4,6 +4,8 @@ import type { InputValueTypes, Task } from '../../../share/text-generation/types
 import type { MoreLikeThisConfig, PromptConfig, TextToSpeechConfig } from '@/models/debug'
 import type { AppData, CustomConfigValueType, SiteInfo } from '@/models/share'
 import type { VisionFile, VisionSettings } from '@/types/app'
+import { cn } from '@langgenius/dify-ui/cn'
+import { RiArrowDownSLine, RiArrowUpSLine } from '@remixicon/react'
 import { useBoolean } from 'ahooks'
 import { noop } from 'es-toolkit/function'
 import * as React from 'react'
@@ -20,16 +22,15 @@ import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
 import { AppSourceType } from '@/service/share'
 import { useGetTryAppParams } from '@/service/use-try-app'
 import { Resolution, TransferMethod } from '@/types/app'
-import { cn } from '@/utils/classnames'
 import { userInputsFormToPromptVariables } from '@/utils/model-config'
 import RunOnce from '../../../share/text-generation/run-once'
 
-type Props = {
+type Props = Readonly<{
   appId: string
   className?: string
   isWorkflow?: boolean
   appData: AppData | null
-}
+}>
 
 const TextGeneration: FC<Props> = ({
   appId,
@@ -38,6 +39,11 @@ const TextGeneration: FC<Props> = ({
   appData,
 }) => {
   const { t } = useTranslation()
+  const [descExpanded, setDescExpanded] = useState(false)
+  const [showDescToggle, setShowDescToggle] = useState(false)
+  const handleDescRef = useCallback((node: HTMLDivElement | null) => {
+    setShowDescToggle(!!node && node.scrollHeight > node.clientHeight)
+  }, [])
   const media = useBreakpoints()
   const isPC = media === MediaType.pc
 
@@ -208,10 +214,45 @@ const TextGeneration: FC<Props> = ({
               background={siteInfo.icon_background || appDefaultIconBackground}
               imageUrl={siteInfo.icon_url}
             />
-            <div className="grow truncate text-text-secondary system-md-semibold">{siteInfo.title}</div>
+            <div className="grow truncate system-md-semibold text-text-secondary">{siteInfo.title}</div>
           </div>
           {siteInfo.description && (
-            <div className="text-text-tertiary system-xs-regular">{siteInfo.description}</div>
+            <div>
+              <div
+                ref={handleDescRef}
+                className={cn(
+                  'relative system-xs-regular break-words whitespace-pre-wrap text-text-tertiary',
+                  !descExpanded && 'line-clamp-3',
+                  descExpanded && 'max-h-32 overflow-y-auto',
+                )}
+              >
+                {siteInfo.description}
+                {!descExpanded && showDescToggle && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-linear-to-b from-components-panel-bg-transparent to-components-panel-bg" />
+                )}
+              </div>
+              {showDescToggle && (
+                <button
+                  type="button"
+                  className="mt-0.5 flex items-center gap-0.5 system-xs-regular text-text-accent hover:opacity-80"
+                  onClick={() => setDescExpanded(v => !v)}
+                >
+                  {descExpanded
+                    ? (
+                        <>
+                          <RiArrowUpSLine className="size-3" />
+                          {t('chat.collapse', { ns: 'share' })}
+                        </>
+                      )
+                    : (
+                        <>
+                          <RiArrowDownSLine className="size-3" />
+                          {t('chat.expand', { ns: 'share' })}
+                        </>
+                      )}
+                </button>
+              )}
+            </div>
           )}
         </div>
         {/* form */}
@@ -241,7 +282,7 @@ const TextGeneration: FC<Props> = ({
             className={cn(
               isShowResultPanel
                 ? 'flex items-center justify-center p-2 pt-6'
-                : 'absolute left-0 top-0 z-10 flex w-full items-center justify-center px-2 pb-[57px] pt-[3px]',
+                : 'absolute top-0 left-0 z-10 flex w-full items-center justify-center px-2 pt-[3px] pb-[57px]',
             )}
             onClick={() => {
               if (isShowResultPanel)
@@ -250,7 +291,7 @@ const TextGeneration: FC<Props> = ({
                 showResultPanel()
             }}
           >
-            <div className="h-1 w-8 cursor-grab rounded bg-divider-solid" />
+            <div className="h-1 w-8 cursor-grab rounded-sm bg-divider-solid" />
           </div>
         )}
         {renderResWrap}

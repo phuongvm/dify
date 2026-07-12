@@ -6,6 +6,7 @@ import type { HumanInputFormData } from '@/types/workflow'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { InputVarType } from '@/app/components/workflow/types'
 import {
+  fetchChatList,
   fetchSuggestedQuestions,
   stopChatMessageResponding,
   submitHumanInputForm,
@@ -42,6 +43,7 @@ vi.mock('../../utils', () => ({
 }))
 
 vi.mock('@/service/share', () => ({
+  fetchChatList: vi.fn(),
   fetchSuggestedQuestions: vi.fn(),
   getUrl: vi.fn(() => 'mock-url'),
   stopChatMessageResponding: vi.fn(),
@@ -62,6 +64,13 @@ vi.mock('@/app/components/base/markdown', () => ({
 
 vi.mock('@/utils/model-config', () => ({
   formatBooleanInputs: vi.fn((forms, inputs) => inputs),
+}))
+
+vi.mock('@/hooks/use-timestamp', () => ({
+  default: () => ({
+    formatTime: (timestamp: number) => `formatted-${timestamp}`,
+    formatDate: (value: string) => `formatted-${value}`,
+  }),
 }))
 
 type ChatHookReturn = ReturnType<typeof useChat>
@@ -129,6 +138,9 @@ const defaultChatHookReturn: Partial<ChatHookReturn> = {
   suggestedQuestions: [],
 }
 
+const getChatInputDisabledSurface = (element: HTMLElement) =>
+  element.closest('.pointer-events-none.opacity-50')
+
 describe('ChatWrapper', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -151,8 +163,8 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
 
-    expect(await screen.findByText('Welcome')).toBeInTheDocument()
-    expect(await screen.findByText('Q1')).toBeInTheDocument()
+    expect(await screen.findByText('Welcome'))!.toBeInTheDocument()
+    expect(await screen.findByText('Q1'))!.toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Q1'))
     expect(handleSend).toHaveBeenCalled()
@@ -170,7 +182,7 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(screen.getByText('Default opening statement')).toBeInTheDocument()
+    expect(screen.getByText('Default opening statement'))!.toBeInTheDocument()
   })
 
   it('should render welcome screen without suggested questions', async () => {
@@ -186,7 +198,7 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(await screen.findByText('Welcome message')).toBeInTheDocument()
+    expect(await screen.findByText('Welcome message'))!.toBeInTheDocument()
   })
 
   it('should show responding state', async () => {
@@ -197,7 +209,7 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(await screen.findByText('Bot thinking...')).toBeInTheDocument()
+    expect(await screen.findByText('Bot thinking...'))!.toBeInTheDocument()
   })
 
   it('should handle manual message input and stop responding', async () => {
@@ -320,9 +332,9 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const disabledContainer = chatInput.closest('.pointer-events-none')
-    expect(disabledContainer).toBeInTheDocument()
-    expect(disabledContainer).toHaveClass('opacity-50')
+    const disabledContainer = getChatInputDisabledSurface(chatInput!)
+    expect(disabledContainer)!.toBeInTheDocument()
+    expect(disabledContainer)!.toHaveClass('opacity-50')
   })
 
   it('should not disable input when required field has value', () => {
@@ -337,7 +349,7 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
+    const container = getChatInputDisabledSurface(chatInput!)
     expect(container).not.toBeInTheDocument()
   })
 
@@ -361,8 +373,8 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
-    expect(container).toBeInTheDocument()
+    const container = getChatInputDisabledSurface(chatInput!)
+    expect(container)!.toBeInTheDocument()
   })
 
   it('should not disable input when file is fully uploaded', () => {
@@ -384,7 +396,7 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
     const textarea = screen.getByRole('textbox')
-    const container = textarea.closest('.pointer-events-none')
+    const container = getChatInputDisabledSurface(textarea)
     expect(container).not.toBeInTheDocument()
   })
 
@@ -411,8 +423,8 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
-    expect(container).toBeInTheDocument()
+    const container = getChatInputDisabledSurface(chatInput!)
+    expect(container)!.toBeInTheDocument()
   })
 
   it('should not disable when all files are uploaded', () => {
@@ -437,7 +449,7 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
     const textarea = screen.getByRole('textbox')
-    const container = textarea.closest('.pointer-events-none')
+    const container = getChatInputDisabledSurface(textarea)
     expect(container).not.toBeInTheDocument()
   })
 
@@ -456,8 +468,8 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
     const textarea = screen.getByRole('textbox')
-    const container = textarea.closest('.pointer-events-none')
-    expect(container).toBeInTheDocument()
+    const container = getChatInputDisabledSurface(textarea)
+    expect(container)!.toBeInTheDocument()
   })
 
   it('should not disable input when allInputsHidden is true', () => {
@@ -472,7 +484,7 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
     const textarea = screen.getByRole('textbox')
-    const container = textarea.closest('.pointer-events-none')
+    const container = getChatInputDisabledSurface(textarea)
     expect(container).not.toBeInTheDocument()
   })
 
@@ -523,7 +535,7 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
 
     expect(handleSwitchSibling).toHaveBeenCalledWith('resume-node', expect.any(Object))
-    const resumeOptions = handleSwitchSibling.mock.calls[0][1]
+    const resumeOptions = handleSwitchSibling.mock.calls[0]![1]
     resumeOptions.onGetSuggestedQuestions('response-from-resume')
     expect(fetchSuggestedQuestions).toHaveBeenCalledWith('response-from-resume', 'webApp', 'test-app-id')
   })
@@ -619,7 +631,7 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
 
-    const onStopCallback = vi.mocked(useChat).mock.calls[0][3] as (taskId: string) => void
+    const onStopCallback = vi.mocked(useChat).mock.calls[0]![3] as (taskId: string) => void
     onStopCallback('taskId-123')
     expect(stopChatMessageResponding).toHaveBeenCalledWith('', 'taskId-123', 'webApp', 'test-app-id')
   })
@@ -645,12 +657,61 @@ describe('ChatWrapper', () => {
     expect(handleSend).toHaveBeenCalled()
 
     // Get the options passed to handleSend
-    const options = handleSend.mock.calls[0][2]
+    const options = handleSend.mock.calls[0]![2]
     expect(options.isPublicAPI).toBe(true)
 
     // Call onGetSuggestedQuestions
     options.onGetSuggestedQuestions('response-id')
     expect(fetchSuggestedQuestions).toHaveBeenCalledWith('response-id', 'webApp', 'test-app-id')
+  })
+
+  it('should fetch current conversation messages after new agent send completes', async () => {
+    const handleSend = vi.fn()
+    vi.mocked(fetchChatList).mockResolvedValue({ data: [] })
+    vi.mocked(useChat).mockReturnValue({
+      ...defaultChatHookReturn,
+      handleSend,
+      chatList: [{ id: '1', isOpeningStatement: true, content: 'Welcome', suggestedQuestions: ['Q1'] }],
+      suggestedQuestions: ['Q1'],
+    } as unknown as ChatHookReturn)
+
+    vi.mocked(useChatWithHistoryContext).mockReturnValue({
+      ...defaultContextValue,
+      currentConversationId: '',
+      isNewAgent: true,
+    })
+
+    render(<ChatWrapper />)
+
+    fireEvent.click(await screen.findByText('Q1'))
+
+    const options = handleSend.mock.calls[0]![2]
+    await options.onGetConversationMessages('conversation-1')
+
+    expect(fetchChatList).toHaveBeenCalledWith('conversation-1', 'webApp', 'test-app-id')
+  })
+
+  it('should not fetch current conversation messages for non-new-agent chat', async () => {
+    const handleSend = vi.fn()
+    vi.mocked(useChat).mockReturnValue({
+      ...defaultChatHookReturn,
+      handleSend,
+      chatList: [{ id: '1', isOpeningStatement: true, content: 'Welcome', suggestedQuestions: ['Q1'] }],
+      suggestedQuestions: ['Q1'],
+    } as unknown as ChatHookReturn)
+
+    vi.mocked(useChatWithHistoryContext).mockReturnValue({
+      ...defaultContextValue,
+      currentConversationId: '',
+      isNewAgent: false,
+    })
+
+    render(<ChatWrapper />)
+
+    fireEvent.click(await screen.findByText('Q1'))
+
+    const options = handleSend.mock.calls[0]![2]
+    expect(options.onGetConversationMessages).toBeUndefined()
   })
 
   it('should call fetchSuggestedQuestions in doSwitchSibling', async () => {
@@ -679,7 +740,7 @@ describe('ChatWrapper', () => {
       fireEvent.click(nextButton)
       expect(handleSwitchSibling).toHaveBeenCalled()
 
-      const options = handleSwitchSibling.mock.calls[0][1]
+      const options = handleSwitchSibling.mock.calls[0]![1]
       options.onGetSuggestedQuestions('response-id')
       expect(fetchSuggestedQuestions).toHaveBeenCalledWith('response-id', 'webApp', 'test-app-id')
     }
@@ -708,8 +769,8 @@ describe('ChatWrapper', () => {
       expect(handleSend).toHaveBeenCalled()
       const args = handleSend.mock.calls[0]
       // args[1] is data
-      expect(args[1].query).toBe('Q1')
-      expect(args[1].parent_message_id).toBeNull()
+      expect(args![1].query).toBe('Q1')
+      expect(args![1].parent_message_id).toBeNull()
     }
   })
 
@@ -737,7 +798,7 @@ describe('ChatWrapper', () => {
       fireEvent.click(regenerateBtn)
       expect(handleSend).toHaveBeenCalled()
       const args = handleSend.mock.calls[0]
-      expect(args[1].parent_message_id).toBe('a0')
+      expect(args![1].parent_message_id).toBe('a0')
     }
   })
 
@@ -774,10 +835,10 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(await screen.findByText('Node 1')).toBeInTheDocument()
+    expect(await screen.findByText('Node 1'))!.toBeInTheDocument()
 
     const input = screen.getAllByRole('textbox').find(el => el.closest('.chat-answer-container')) || screen.getAllByRole('textbox')[0]
-    fireEvent.change(input, { target: { value: 'test' } })
+    fireEvent.change(input!, { target: { value: 'test' } })
 
     const runButton = screen.getByText('Run')
     fireEvent.click(runButton)
@@ -817,10 +878,10 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(await screen.findByText('Node Web 1')).toBeInTheDocument()
+    expect(await screen.findByText('Node Web 1'))!.toBeInTheDocument()
 
     const input = screen.getAllByRole('textbox').find(el => el.closest('.chat-answer-container')) || screen.getAllByRole('textbox')[0]
-    fireEvent.change(input, { target: { value: 'web-test' } })
+    fireEvent.change(input!, { target: { value: 'web-test' } })
     fireEvent.click(screen.getByText('Run'))
 
     await waitFor(() => {
@@ -841,7 +902,7 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
     expect(document.querySelector('.chat-answer-container')).not.toBeInTheDocument()
-    expect(screen.getByText('Welcome')).toBeInTheDocument()
+    expect(screen.getByText('Welcome'))!.toBeInTheDocument()
   })
 
   it('should show all messages including opening statement when there are multiple messages', () => {
@@ -861,7 +922,7 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const welcomeElements = screen.getAllByText('Welcome')
     expect(welcomeElements.length).toBeGreaterThan(0)
-    expect(screen.getByText('User message')).toBeInTheDocument()
+    expect(screen.getByText('User message'))!.toBeInTheDocument()
   })
 
   it('should show chatNode and inputs form on desktop for new conversation', () => {
@@ -873,7 +934,7 @@ describe('ChatWrapper', () => {
     })
 
     render(<ChatWrapper />)
-    expect(screen.getByText('Test')).toBeInTheDocument()
+    expect(screen.getByText('Test'))!.toBeInTheDocument()
   })
 
   it('should show chatNode on mobile for new conversation only', () => {
@@ -885,7 +946,7 @@ describe('ChatWrapper', () => {
     })
 
     const { rerender } = render(<ChatWrapper />)
-    expect(screen.getByText('Test')).toBeInTheDocument()
+    expect(screen.getByText('Test'))!.toBeInTheDocument()
 
     vi.mocked(useChatWithHistoryContext).mockReturnValue({
       ...defaultContextValue,
@@ -974,8 +1035,8 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(screen.getByText('Answer')).toBeInTheDocument()
-    expect(screen.getByAltText('answer icon')).toBeInTheDocument()
+    expect(screen.getByText('Answer'))!.toBeInTheDocument()
+    expect(screen.getByAltText('answer icon'))!.toBeInTheDocument()
   })
 
   it('should render question icon fallback when user avatar is available', () => {
@@ -993,7 +1054,7 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(screen.getByText('J')).toBeInTheDocument()
+    expect(screen.getByText('J'))!.toBeInTheDocument()
   })
 
   it('should use fallback values for nullable appData, appMeta and avatar name', () => {
@@ -1012,8 +1073,8 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(screen.getByText('Question with fallback avatar name')).toBeInTheDocument()
-    expect(screen.getByText('U')).toBeInTheDocument()
+    expect(screen.getByText('Question with fallback avatar name'))!.toBeInTheDocument()
+    expect(screen.getByText('U'))!.toBeInTheDocument()
   })
 
   it('should set handleStop on currentChatInstanceRef', () => {
@@ -1101,8 +1162,8 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
-    expect(container).toBeInTheDocument()
+    const container = getChatInputDisabledSurface(chatInput!)
+    expect(container)!.toBeInTheDocument()
   })
 
   it('should call formatBooleanInputs when sending message', async () => {
@@ -1223,7 +1284,8 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
     // This tests line 91 - using currentConversationItem.introduction
-    expect(screen.getByText('Custom introduction from conversation item')).toBeInTheDocument()
+    // This tests line 91 - using currentConversationItem.introduction
+    expect(screen.getByText('Custom introduction from conversation item'))!.toBeInTheDocument()
   })
 
   it('should handle early return when hasEmptyInput is already set', () => {
@@ -1242,8 +1304,8 @@ describe('ChatWrapper', () => {
     // This tests line 106 - early return when hasEmptyInput is set
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
-    expect(container).toBeInTheDocument()
+    const container = getChatInputDisabledSurface(chatInput!)
+    expect(container)!.toBeInTheDocument()
   })
 
   it('should handle early return when fileIsUploading is already set', () => {
@@ -1270,8 +1332,8 @@ describe('ChatWrapper', () => {
     // This tests line 109 - early return when fileIsUploading is set
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
-    expect(container).toBeInTheDocument()
+    const container = getChatInputDisabledSurface(chatInput!)
+    expect(container)!.toBeInTheDocument()
   })
 
   it('should handle doSend with no parent message id', async () => {
@@ -1332,10 +1394,10 @@ describe('ChatWrapper', () => {
 
     render(<ChatWrapper />)
 
-    fireEvent.click(await screen.findByTestId('edit-btn'))
+    fireEvent.click(await screen.findByRole('button', { name: 'common.operation.edit' }))
     const editedTextarea = await screen.findByDisplayValue('Original question')
     fireEvent.change(editedTextarea, { target: { value: 'Edited question text' } })
-    fireEvent.click(screen.getByTestId('save-edit-btn'))
+    fireEvent.click(screen.getByRole('button', { name: 'common.operation.save' }))
 
     await waitFor(() => {
       expect(handleSend).toHaveBeenCalledWith(
@@ -1561,7 +1623,7 @@ describe('ChatWrapper', () => {
     } as unknown as ChatHookReturn)
 
     render(<ChatWrapper />)
-    expect(screen.getByText('Default opening statement')).toBeInTheDocument()
+    expect(screen.getByText('Default opening statement'))!.toBeInTheDocument()
   })
 
   it('should handle doSend when regenerating with null parentAnswer', async () => {
@@ -1609,7 +1671,9 @@ describe('ChatWrapper', () => {
 
     // Just verify the component renders - the actual editedQuestion flow
     // is tested through the doRegenerate callback that's passed to Chat
-    expect(screen.getByText('Answer')).toBeInTheDocument()
+    // Just verify the component renders - the actual editedQuestion flow
+    // is tested through the doRegenerate callback that's passed to Chat
+    expect(screen.getByText('Answer'))!.toBeInTheDocument()
     expect(handleSend).toBeDefined()
   })
 
@@ -1629,7 +1693,9 @@ describe('ChatWrapper', () => {
 
     // The doRegenerate is passed to Chat component and would be called
     // This ensures lines 198-200 are covered
-    expect(screen.getByText('A1')).toBeInTheDocument()
+    // The doRegenerate is passed to Chat component and would be called
+    // This ensures lines 198-200 are covered
+    expect(screen.getByText('A1'))!.toBeInTheDocument()
   })
 
   it('should handle doRegenerate when question has message_files', async () => {
@@ -1809,7 +1875,38 @@ describe('ChatWrapper', () => {
     render(<ChatWrapper />)
     const textboxes = screen.getAllByRole('textbox')
     const chatInput = textboxes[textboxes.length - 1]
-    const container = chatInput.closest('.pointer-events-none')
+    const container = getChatInputDisabledSurface(chatInput!)
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
+    // Should not be disabled because it's not required
     // Should not be disabled because it's not required
     expect(container).not.toBeInTheDocument()
   })

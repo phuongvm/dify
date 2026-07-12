@@ -1,14 +1,18 @@
 'use client'
 import type { FC } from 'react'
+import { useAtomValue } from 'jotai'
 import { useCallback } from 'react'
 import Loading from '@/app/components/base/loading'
+import { userProfileIdAtom } from '@/context/account-state'
 import { useDatasetDetailContextWithSelector } from '@/context/dataset-detail'
+import { workspacePermissionKeysAtom } from '@/context/permission-state'
 import { useProviderContext } from '@/context/provider-context'
 import { DataSourceType } from '@/models/datasets'
 import { useRouter } from '@/next/navigation'
 import { useDocumentList, useInvalidDocumentDetail, useInvalidDocumentList } from '@/service/knowledge/use-document'
 import { useChildSegmentListKey, useSegmentListKey } from '@/service/knowledge/use-segment'
 import { useInvalid } from '@/service/use-base'
+import { getDatasetACLCapabilities } from '@/utils/permission'
 import useEditDocumentMetadata from '../metadata/hooks/use-edit-dataset-metadata'
 import DocumentsHeader from './components/documents-header'
 import EmptyElement from './components/empty-element'
@@ -29,7 +33,14 @@ const Documents: FC<IDocumentsProps> = ({ datasetId }) => {
   const isFreePlan = plan.type === 'sandbox'
 
   const dataset = useDatasetDetailContextWithSelector(s => s.dataset)
+  const currentUserId = useAtomValue(userProfileIdAtom)
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
   const embeddingAvailable = !!dataset?.embedding_available
+  const datasetACLCapabilities = getDatasetACLCapabilities(dataset?.permission_keys, {
+    currentUserId,
+    resourceMaintainer: dataset?.maintainer,
+    workspacePermissionKeys,
+  })
 
   // Use custom hook for page state management
   const {
@@ -106,12 +117,14 @@ const Documents: FC<IDocumentsProps> = ({ datasetId }) => {
 
   // Route to document creation page
   const routeToDocCreate = useCallback(() => {
+    if (!datasetACLCapabilities.canUse)
+      return
     if (dataset?.runtime_mode === 'rag_pipeline') {
       router.push(`/datasets/${datasetId}/documents/create-from-pipeline`)
       return
     }
     router.push(`/datasets/${datasetId}/documents/create`)
-  }, [dataset?.runtime_mode, datasetId, router])
+  }, [dataset?.runtime_mode, datasetACLCapabilities.canUse, datasetId, router])
 
   const total = documentsRes?.total || 0
   const documentsList = documentsRes?.data
@@ -147,7 +160,7 @@ const Documents: FC<IDocumentsProps> = ({ datasetId }) => {
     const isDataSourceNotion = dataset?.data_source_type === DataSourceType.NOTION
     return (
       <EmptyElement
-        canAdd={embeddingAvailable}
+        canAdd={embeddingAvailable && datasetACLCapabilities.canUse}
         onClick={routeToDocCreate}
         type={isDataSourceNotion ? 'sync' : 'upload'}
       />
@@ -160,6 +173,9 @@ const Documents: FC<IDocumentsProps> = ({ datasetId }) => {
         datasetId={datasetId}
         dataSourceType={dataset?.data_source_type}
         embeddingAvailable={embeddingAvailable}
+        canManageMetadata={datasetACLCapabilities.canEdit}
+        canAddDocument={datasetACLCapabilities.canUse}
+        canEditDocument={datasetACLCapabilities.canEdit}
         isFreePlan={isFreePlan}
         statusFilterValue={statusFilterValue}
         sortValue={sortValue}

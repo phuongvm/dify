@@ -16,7 +16,9 @@ import pytest
 from opentelemetry.trace import StatusCode
 
 from core.app.workflow.layers.observability import ObservabilityLayer
-from dify_graph.enums import BuiltinNodeTypes
+from extensions.otel.semconv import DifySpanAttributes
+from graphon.enums import BuiltinNodeTypes
+from graphon.graph_events import GraphRunAbortedEvent
 
 
 class TestObservabilityLayerInitialization:
@@ -144,7 +146,7 @@ class TestObservabilityLayerParserIntegration:
         self, tracer_provider_with_memory_exporter, memory_span_exporter, mock_llm_node, mock_result_event
     ):
         """Test that LLM parser is used for LLM nodes and extracts LLM-specific attributes."""
-        from dify_graph.node_events.base import NodeRunResult
+        from graphon.node_events import NodeRunResult
 
         mock_result_event.node_run_result = NodeRunResult(
             inputs={},
@@ -182,7 +184,7 @@ class TestObservabilityLayerParserIntegration:
         self, tracer_provider_with_memory_exporter, memory_span_exporter, mock_retrieval_node, mock_result_event
     ):
         """Test that retrieval parser is used for retrieval nodes and extracts retrieval-specific attributes."""
-        from dify_graph.node_events.base import NodeRunResult
+        from graphon.node_events import NodeRunResult
 
         mock_result_event.node_run_result = NodeRunResult(
             inputs={"query": "test query"},
@@ -210,7 +212,7 @@ class TestObservabilityLayerParserIntegration:
         self, tracer_provider_with_memory_exporter, memory_span_exporter, mock_start_node, mock_result_event
     ):
         """Test that result_event parameter allows parsers to extract inputs and outputs."""
-        from dify_graph.node_events.base import NodeRunResult
+        from graphon.node_events import NodeRunResult
 
         mock_result_event.node_run_result = NodeRunResult(
             inputs={"input_key": "input_value"},
@@ -280,6 +282,27 @@ class TestObservabilityLayerGraphLifecycle:
 
         assert len(layer._node_contexts) == 0
         assert "node spans were not properly ended" in caplog.text
+
+    @patch("core.app.workflow.layers.observability.dify_config.ENABLE_OTEL", True)
+    @pytest.mark.usefixtures("mock_is_instrument_flag_enabled_false")
+    def test_graph_aborted_event_records_reason_on_current_span(
+        self, tracer_provider_with_memory_exporter, memory_span_exporter, mock_start_node
+    ):
+        layer = ObservabilityLayer()
+        layer.on_graph_start()
+        layer.on_node_run_start(mock_start_node)
+
+        layer.on_event(GraphRunAbortedEvent(reason="worker shutdown", outputs={}))
+        layer.on_node_run_end(mock_start_node, None)
+
+        spans = memory_span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes[DifySpanAttributes.WORKFLOW_ABORT_REASON] == "worker shutdown"
+        assert any(
+            event.name == "dify.workflow.aborted"
+            and event.attributes[DifySpanAttributes.WORKFLOW_ABORT_REASON] == "worker shutdown"
+            for event in spans[0].events
+        )
 
 
 class TestObservabilityLayerDisabledMode:

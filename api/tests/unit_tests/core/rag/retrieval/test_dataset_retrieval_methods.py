@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
@@ -55,7 +56,7 @@ def create_mock_document(
     doc_id: str,
     score: float = 0.8,
     provider: str = "dify",
-    additional_metadata: dict | None = None,
+    additional_metadata: dict[str, Any] | None = None,
 ) -> Document:
     """
     Create a mock Document object for testing.
@@ -450,15 +451,14 @@ class TestDatasetRetrievalKnowledgeRetrieval:
                             mock_document.data_source_type = "upload_file"
                             mock_document.doc_metadata = {}
 
-                            mock_session.query.return_value.filter.return_value.all.return_value = [
-                                mock_dataset_from_db
-                            ]
-                            mock_session.query.return_value.filter.return_value.all.__iter__ = lambda self: iter(
-                                [mock_dataset_from_db, mock_document]
-                            )
+                            mock_datasets = MagicMock()
+                            mock_datasets.all.return_value = [mock_dataset_from_db]
+                            mock_documents = MagicMock()
+                            mock_documents.all.return_value = [mock_document]
+                            mock_session.scalars.side_effect = [mock_datasets, mock_documents]
 
                             # Act
-                            result = dataset_retrieval.knowledge_retrieval(request)
+                            result = dataset_retrieval.knowledge_retrieval(MagicMock(), request)
 
                             # Assert
                             assert isinstance(result, list)
@@ -507,7 +507,7 @@ class TestDatasetRetrievalKnowledgeRetrieval:
                 ) as mock_get_metadata:
                     with patch.object(dataset_retrieval, "multiple_retrieve", return_value=[]):
                         # Act
-                        result = dataset_retrieval.knowledge_retrieval(request)
+                        result = dataset_retrieval.knowledge_retrieval(MagicMock(), request)
 
                         # Assert
                         assert isinstance(result, list)
@@ -565,7 +565,7 @@ class TestDatasetRetrievalKnowledgeRetrieval:
                     )
                     with patch.object(dataset_retrieval, "multiple_retrieve", return_value=[external_doc]):
                         # Act
-                        result = dataset_retrieval.knowledge_retrieval(request)
+                        result = dataset_retrieval.knowledge_retrieval(MagicMock(), request)
 
                         # Assert
                         assert isinstance(result, list)
@@ -608,7 +608,7 @@ class TestDatasetRetrievalKnowledgeRetrieval:
                     # Mock multiple_retrieve to return empty list
                     with patch.object(dataset_retrieval, "multiple_retrieve", return_value=[]):
                         # Act
-                        result = dataset_retrieval.knowledge_retrieval(request)
+                        result = dataset_retrieval.knowledge_retrieval(MagicMock(), request)
 
                         # Assert
                         assert result == []
@@ -648,7 +648,7 @@ class TestDatasetRetrievalKnowledgeRetrieval:
         ):
             # Act & Assert
             with pytest.raises(exc.RateLimitExceededError):
-                dataset_retrieval.knowledge_retrieval(request)
+                dataset_retrieval.knowledge_retrieval(MagicMock(), request)
 
     def test_knowledge_retrieval_no_available_datasets(self):
         """
@@ -682,7 +682,7 @@ class TestDatasetRetrievalKnowledgeRetrieval:
             # Mock _get_available_datasets to return empty list
             with patch.object(dataset_retrieval, "_get_available_datasets", return_value=[]):
                 # Act
-                result = dataset_retrieval.knowledge_retrieval(request)
+                result = dataset_retrieval.knowledge_retrieval(MagicMock(), request)
 
                 # Assert
                 assert result == []

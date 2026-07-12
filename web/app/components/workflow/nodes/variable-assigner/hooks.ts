@@ -8,21 +8,23 @@ import type {
   VariableAssignerNodeType,
 } from './types'
 import { uniqBy } from 'es-toolkit/compat'
+
 import { produce } from 'immer'
 import { useCallback } from 'react'
 import {
   useNodes,
   useStoreApi,
 } from 'reactflow'
-import { useFeatures } from '@/app/components/base/features/hooks'
+import { FlowType } from '@/types/common'
 import {
   useIsChatMode,
   useNodeDataUpdate,
   useWorkflow,
   useWorkflowVariables,
 } from '../../hooks'
+import { useHooksStore } from '../../hooks-store/store'
 import { useWorkflowStore } from '../../store'
-import { BlockEnum, VarType } from '../../types'
+import { filterSnippetSystemVars, isSnippetCanvas } from '../_base/hooks/snippet-input-field-vars'
 
 export const useVariableAssigner = () => {
   const store = useStoreApi()
@@ -32,9 +34,7 @@ export const useVariableAssigner = () => {
   const handleAssignVariableValueChange = useCallback((nodeId: string, value: ValueSelector, varDetail: Var, groupId?: string) => {
     const { getNodes } = store.getState()
     const nodes = getNodes()
-    const node = nodes.find(node => node.id === nodeId) as Node<VariableAssignerNodeType> | undefined
-    if (!node)
-      return
+    const node: Node<VariableAssignerNodeType> = nodes.find(node => node.id === nodeId)!
 
     let payload
     if (groupId && groupId !== 'target') {
@@ -130,8 +130,7 @@ export const useGetAvailableVars = () => {
   const { getBeforeNodesInSameBranchIncludeParent } = useWorkflow()
   const { getNodeAvailableVars } = useWorkflowVariables()
   const isChatMode = useIsChatMode()
-  const features = useFeatures(s => s.features)
-  const isSupportSandbox = !!features.sandbox?.enabled
+  const isSnippetFlow = useHooksStore(s => s.configsMap?.flowType) === FlowType.snippet || isSnippetCanvas()
   const getAvailableVars = useCallback((nodeId: string, handleId: string, filterVar: (v: Var) => boolean, hideEnv = false) => {
     const availableNodes: Node[] = []
     const currentNode = nodes.find(node => node.id === nodeId)!
@@ -143,7 +142,7 @@ export const useGetAvailableVars = () => {
     const parentNode = nodes.find(node => node.id === currentNode.parentId)
 
     if (hideEnv) {
-      return getNodeAvailableVars({
+      const availableVars = getNodeAvailableVars({
         parentNode,
         beforeNodes: uniqBy(availableNodes, 'id').filter(node => node.id !== nodeId),
         isChatMode,
@@ -155,37 +154,18 @@ export const useGetAvailableVars = () => {
           ...node,
           vars: node.isStartNode ? node.vars.filter(v => !v.variable.startsWith('sys.')) : node.vars,
         }))
-        .map((node) => {
-          return {
-            ...node,
-            vars: node.vars.filter((item) => {
-              if (isSupportSandbox && item.type === VarType.string && node.nodeType === BlockEnum.LLM)
-                return item.variable !== 'text' && item.variable !== 'reasoning_content'
-
-              return true
-            }),
-          }
-        })
         .filter(item => item.vars.length > 0)
+
+      return filterSnippetSystemVars(availableVars, isSnippetFlow)
     }
 
-    return getNodeAvailableVars({
+    return filterSnippetSystemVars(getNodeAvailableVars({
       parentNode,
       beforeNodes: uniqBy(availableNodes, 'id').filter(node => node.id !== nodeId),
       isChatMode,
       filterVar,
-    }).map((node) => {
-      return {
-        ...node,
-        vars: node.vars.filter((item) => {
-          if (isSupportSandbox && item.type === VarType.string && node.nodeType === BlockEnum.LLM)
-            return item.variable !== 'text' && item.variable !== 'reasoning_content'
-
-          return true
-        }),
-      }
-    })
-  }, [nodes, getBeforeNodesInSameBranchIncludeParent, getNodeAvailableVars, isChatMode, isSupportSandbox])
+    }), isSnippetFlow)
+  }, [nodes, getBeforeNodesInSameBranchIncludeParent, getNodeAvailableVars, isChatMode, isSnippetFlow])
 
   return getAvailableVars
 }

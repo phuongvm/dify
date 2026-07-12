@@ -13,6 +13,7 @@ from core.rag.index_processor.constant.built_in_field import BuiltInField
 from core.rag.index_processor.constant.index_type import IndexStructureType, IndexTechniqueType
 from core.rag.models.document import ChildDocument, Document
 from extensions.ext_database import db
+from libs.pagination import paginate_query
 from models.dataset import Dataset, DatasetCollectionBinding, DatasetMetadata, DatasetMetadataBinding, DocumentSegment
 from models.dataset import Document as DatasetDocument
 from models.enums import DatasetMetadataType, IndexingStatus, SegmentStatus
@@ -30,7 +31,7 @@ def vdb_migrate(scope: str):
 
 def migrate_annotation_vector_database():
     """
-    Migrate annotation datas to target vector database .
+    Migrate annotation data to target vector database.
     """
     click.echo(click.style("Starting annotation data migration.", fg="green"))
     create_count = 0
@@ -140,7 +141,7 @@ def migrate_annotation_vector_database():
 
 def migrate_knowledge_vector_database():
     """
-    Migrate vector database datas to target vector database .
+    Migrate vector database data to target vector database.
     """
     click.echo(click.style("Starting vector database migration.", fg="green"))
     create_count = 0
@@ -183,7 +184,7 @@ def migrate_knowledge_vector_database():
                 .order_by(Dataset.created_at.desc())
             )
 
-            datasets = db.paginate(select=stmt, page=page, per_page=50, max_per_page=50, error_out=False)
+            datasets = paginate_query(stmt, page=page, per_page=50, max_per_page=50)
             if not datasets.items:
                 break
         except SQLAlchemyError:
@@ -341,10 +342,9 @@ def add_qdrant_index(field: str):
             click.echo(click.style("No dataset collection bindings found.", fg="red"))
             return
         import qdrant_client
+        from dify_vdb_qdrant.qdrant_vector import PathQdrantParams, QdrantConfig
         from qdrant_client.http.exceptions import UnexpectedResponse
         from qdrant_client.http.models import PayloadSchemaType
-
-        from core.rag.datasource.vdb.qdrant.qdrant_vector import PathQdrantParams, QdrantConfig
 
         for binding in bindings:
             if dify_config.QDRANT_URL is None:
@@ -410,7 +410,7 @@ def old_metadata_migration():
                 .where(DatasetDocument.doc_metadata.is_not(None))
                 .order_by(DatasetDocument.created_at.desc())
             )
-            documents = db.paginate(select=stmt, page=page, per_page=50, max_per_page=50, error_out=False)
+            documents = paginate_query(stmt, page=page, per_page=50, max_per_page=50)
         except SQLAlchemyError:
             raise
         if not documents:

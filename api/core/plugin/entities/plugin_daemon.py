@@ -4,7 +4,7 @@ import enum
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,13 +16,11 @@ from core.plugin.entities.plugin import PluginDeclaration, PluginEntity
 from core.tools.entities.common_entities import I18nObject
 from core.tools.entities.tool_entities import ToolProviderEntityWithPlugin
 from core.trigger.entities.entities import TriggerProviderEntity
-from dify_graph.model_runtime.entities.model_entities import AIModelEntity
-from dify_graph.model_runtime.entities.provider_entities import ProviderEntity
-
-T = TypeVar("T", bound=(BaseModel | dict | list | bool | str))
+from graphon.model_runtime.entities.model_entities import AIModelEntity
+from graphon.model_runtime.entities.provider_entities import ProviderEntity
 
 
-class PluginDaemonBasicResponse(BaseModel, Generic[T]):
+class PluginDaemonBasicResponse[T: BaseModel | dict | list | bool | str](BaseModel):
     """
     Basic response from plugin daemon.
     """
@@ -75,7 +73,7 @@ class PluginBasicBooleanResponse(BaseModel):
     """
 
     result: bool
-    credentials: dict | None = None
+    credentials: dict[str, Any] | None = None
 
 
 class PluginModelSchemaEntity(BaseModel):
@@ -170,6 +168,7 @@ class PluginInstallTask(BasePluginEntity):
 class PluginInstallTaskStartResponse(BaseModel):
     all_installed: bool = Field(description="Whether all plugins are installed.")
     task_id: str = Field(description="The ID of the install task.")
+    task: PluginInstallTask | None = Field(default=None, description="The install task.")
 
 
 class PluginVerification(BaseModel):
@@ -208,6 +207,11 @@ class PluginListResponse(BaseModel):
     total: int
 
 
+class PluginListWithoutTotalResponse(BaseModel):
+    list: list[PluginEntity]
+    has_more: bool
+
+
 class PluginDynamicSelectOptionsResponse(BaseModel):
     options: Sequence[PluginParameterOption] = Field(description="The options of the dynamic select.")
 
@@ -224,7 +228,7 @@ class CredentialType(enum.StrEnum):
     OAUTH2 = "oauth2"
     UNAUTHORIZED = "unauthorized"
 
-    def get_name(self):
+    def get_name(self) -> str:
         if self == CredentialType.API_KEY:
             return "API KEY"
         elif self == CredentialType.OAUTH2:

@@ -4,13 +4,8 @@ import type { CommonNodeType, Node } from '@/app/components/workflow/types'
 import type { FlowType } from '@/types/common'
 import type { NodeRunResult, VarInInspect } from '@/types/workflow'
 
-export { VarKindType as VarType } from '../_base/types'
-
 export enum DataSourceClassification {
   localFile = 'local_file',
-  websiteCrawl = 'website_crawl',
-  onlineDocument = 'online_document',
-  onlineDrive = 'online_drive',
 }
 
 export type ToolVarInputs = ResourceVarInputs

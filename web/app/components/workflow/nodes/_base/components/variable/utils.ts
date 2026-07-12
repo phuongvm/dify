@@ -1,10 +1,7 @@
-import type { AgentNodeType } from '../../../agent/types'
 import type { AnswerNodeType } from '../../../answer/types'
 import type { CodeNodeType } from '../../../code/types'
-import type { CommandNodeType } from '../../../command/types'
 import type { DocExtractorNodeType } from '../../../document-extractor/types'
 import type { EndNodeType } from '../../../end/types'
-import type { FileUploadNodeType } from '../../../file-upload/types'
 import type { HttpNodeType } from '../../../http/types'
 import type { IfElseNodeType } from '../../../if-else/types'
 import type { IterationNodeType } from '../../../iteration/types'
@@ -16,6 +13,8 @@ import type { ParameterExtractorNodeType } from '../../../parameter-extractor/ty
 import type { QuestionClassifierNodeType } from '../../../question-classifier/types'
 import type { TemplateTransformNodeType } from '../../../template-transform/types'
 import type { ToolNodeType } from '../../../tool/types'
+import type { AgentV2NodeType } from '@/app/components/workflow/nodes/agent-v2/types'
+import type { AgentNodeType } from '@/app/components/workflow/nodes/agent/types'
 import type { DataSourceNodeType } from '@/app/components/workflow/nodes/data-source/types'
 import type { HumanInputNodeType } from '@/app/components/workflow/nodes/human-input/types'
 import type { CaseItem, Condition } from '@/app/components/workflow/nodes/if-else/types'
@@ -29,11 +28,11 @@ import type {
   EnvironmentVariable,
   Node,
   NodeOutPutVar,
+  PromptItem,
   ToolWithProvider,
   ValueSelector,
   Var,
 } from '@/app/components/workflow/types'
-import type { PromptItem } from '@/models/debug'
 import type { RAGPipelineVariable } from '@/models/pipeline'
 import type { SchemaTypeDefinition } from '@/service/use-common'
 import { uniq } from 'es-toolkit/array'
@@ -41,9 +40,7 @@ import { isArray } from 'es-toolkit/compat'
 import { produce } from 'immer'
 import {
   AGENT_OUTPUT_STRUCT,
-  COMMAND_OUTPUT_STRUCT,
   FILE_STRUCT,
-  FILE_UPLOAD_OUTPUT_STRUCT,
   getGlobalVars,
   HTTP_REQUEST_OUTPUT_STRUCT,
   HUMAN_INPUT_OUTPUT_STRUCT,
@@ -55,8 +52,11 @@ import {
   TEMPLATE_TRANSFORM_OUTPUT_STRUCT,
   TOOL_OUTPUT_STRUCT,
 } from '@/app/components/workflow/constants'
+import { getAgentV2OutputVars } from '@/app/components/workflow/nodes/agent-v2/output-variables'
+import { isAgentV2NodeData } from '@/app/components/workflow/nodes/agent-v2/types'
 import DataSourceNodeDefault from '@/app/components/workflow/nodes/data-source/default'
 import HumanInputNodeDefault from '@/app/components/workflow/nodes/human-input/default'
+import { DeliveryMethodType } from '@/app/components/workflow/nodes/human-input/types'
 import ToolNodeDefault from '@/app/components/workflow/nodes/tool/default'
 import PluginTriggerNodeDefault from '@/app/components/workflow/nodes/trigger-plugin/default'
 import {
@@ -67,7 +67,10 @@ import {
 import { VAR_REGEX } from '@/config'
 import { AppModeEnum } from '@/types/app'
 import { OUTPUT_FILE_SUB_VARIABLES } from '../../../constants'
-import { FILE_REF_FORMAT, Type } from '../../../llm/types'
+import {
+
+  Type,
+} from '../../../llm/types'
 import { VarType as ToolVarType } from '../../../tool/types'
 
 export const isSystemVar = (valueSelector: ValueSelector) => {
@@ -79,7 +82,7 @@ export const isGlobalVar = (valueSelector: ValueSelector) => {
     return false
   const second = valueSelector[1]
 
-  if (['query', 'files'].includes(second))
+  if (['query', 'files'].includes(second!))
     return false
   return true
 }
@@ -102,7 +105,7 @@ export const isSpecialVar = (prefix: string): boolean => {
   return ['sys', 'env', 'conversation', 'rag'].includes(prefix)
 }
 
-export const hasValidChildren = (children: any): boolean => {
+const hasValidChildren = (children: any): boolean => {
   return (
     children
     && ((Array.isArray(children) && children.length > 0)
@@ -126,16 +129,7 @@ export const inputVarTypeToVarType = (type: InputVarType): VarType => {
   )
 }
 
-const structTypeToVarType = (
-  type: Type,
-  isArray?: boolean,
-  format?: string,
-  itemsFormat?: string,
-): VarType => {
-  if (isArray && itemsFormat === FILE_REF_FORMAT)
-    return VarType.arrayFile
-  if (!isArray && format === FILE_REF_FORMAT)
-    return VarType.file
+const structTypeToVarType = (type: Type, isArray?: boolean): VarType => {
   if (isArray) {
     return (
       (
@@ -173,7 +167,6 @@ export const varTypeToStructType = (type: VarType): Type => {
         [VarType.arrayNumber]: Type.array,
         [VarType.arrayObject]: Type.array,
         [VarType.arrayFile]: Type.array,
-        [VarType.arrayMessage]: Type.array,
       } as any
     )[type] || Type.string
   )
@@ -186,10 +179,9 @@ const findExceptVarInStructuredProperties = (
   const res = produce(properties, (draft) => {
     Object.keys(properties).forEach((key) => {
       const item = properties[key]
-      const isObj = item.type === Type.object
-      const isArray = item.type === Type.array
-      const arrayType = item.items?.type
-      const arrayFormat = item.items?.format
+      const isObj = item!.type === Type.object
+      const isArray = item!.type === Type.array
+      const arrayType = item!.items?.type
 
       if (
         !isObj
@@ -197,10 +189,8 @@ const findExceptVarInStructuredProperties = (
           {
             variable: key,
             type: structTypeToVarType(
-              isArray ? arrayType! : item.type,
+              isArray ? arrayType! : item!.type,
               isArray,
-              item.format,
-              arrayFormat,
             ),
           },
           [key],
@@ -209,9 +199,9 @@ const findExceptVarInStructuredProperties = (
         delete properties[key]
         return
       }
-      if (item.type === Type.object && item.properties) {
-        item.properties = findExceptVarInStructuredProperties(
-          item.properties,
+      if (item!.type === Type.object && item!.properties) {
+        item!.properties = findExceptVarInStructuredProperties(
+          item!.properties,
           filterVar,
         )
       }
@@ -229,20 +219,17 @@ const findExceptVarInStructuredOutput = (
     const properties = draft.schema.properties
     Object.keys(properties).forEach((key) => {
       const item = properties[key]
-      const isObj = item.type === Type.object
-      const isArray = item.type === Type.array
-      const arrayType = item.items?.type
-      const arrayFormat = item.items?.format
+      const isObj = item!.type === Type.object
+      const isArray = item!.type === Type.array
+      const arrayType = item!.items?.type
       if (
         !isObj
         && !filterVar(
           {
             variable: key,
             type: structTypeToVarType(
-              isArray ? arrayType! : item.type,
+              isArray ? arrayType! : item!.type,
               isArray,
-              item.format,
-              arrayFormat,
             ),
           },
           [key],
@@ -251,9 +238,9 @@ const findExceptVarInStructuredOutput = (
         delete properties[key]
         return
       }
-      if (item.type === Type.object && item.properties) {
-        item.properties = findExceptVarInStructuredProperties(
-          item.properties,
+      if (item!.type === Type.object && item!.properties) {
+        item!.properties = findExceptVarInStructuredProperties(
+          item!.properties,
           filterVar,
         )
       }
@@ -342,24 +329,6 @@ const findExceptVarInObject = (
   return res
 }
 
-const getLLMNodeOutputVars = (llmNodeData: LLMNodeType): Var[] => {
-  const vars = [...LLM_OUTPUT_STRUCT]
-
-  if (
-    llmNodeData.structured_output_enabled
-    && llmNodeData.structured_output?.schema?.properties
-    && Object.keys(llmNodeData.structured_output.schema.properties).length > 0
-  ) {
-    vars.push({
-      variable: 'structured_output',
-      type: VarType.object,
-      children: llmNodeData.structured_output,
-    })
-  }
-
-  return vars
-}
-
 const formatItem = (
   item: any,
   isChatMode: boolean,
@@ -374,7 +343,6 @@ const formatItem = (
     nodeId: id,
     title: data.title,
     vars: [],
-    nodeType: data?.type,
   }
   switch (data.type) {
     case BlockEnum.Start: {
@@ -436,8 +404,18 @@ const formatItem = (
     }
 
     case BlockEnum.LLM: {
-      const llmNodeData = data as LLMNodeType
-      res.vars = getLLMNodeOutputVars(llmNodeData)
+      res.vars = [...LLM_OUTPUT_STRUCT]
+      if (
+        data.structured_output_enabled
+        && data.structured_output?.schema?.properties
+        && Object.keys(data.structured_output.schema.properties).length > 0
+      ) {
+        res.vars.push({
+          variable: 'structured_output',
+          type: VarType.object,
+          children: data.structured_output,
+        })
+      }
 
       break
     }
@@ -452,7 +430,7 @@ const formatItem = (
         ? Object.keys(outputs).map((key) => {
             return {
               variable: key,
-              type: outputs[key].type,
+              type: outputs[key]!.type,
             }
           })
         : []
@@ -461,27 +439,6 @@ const formatItem = (
 
     case BlockEnum.TemplateTransform: {
       res.vars = TEMPLATE_TRANSFORM_OUTPUT_STRUCT
-      break
-    }
-
-    case BlockEnum.Command: {
-      res.vars = COMMAND_OUTPUT_STRUCT
-      break
-    }
-
-    case BlockEnum.FileUpload: {
-      res.vars = (data as FileUploadNodeType).is_array_file
-        ? [
-            {
-              variable: 'sandbox_path',
-              type: VarType.arrayString,
-            },
-            {
-              variable: 'file_name',
-              type: VarType.arrayString,
-            },
-          ]
-        : FILE_UPLOAD_OUTPUT_STRUCT
       break
     }
 
@@ -638,6 +595,11 @@ const formatItem = (
     }
 
     case BlockEnum.Agent: {
+      if (isAgentV2NodeData(data)) {
+        res.vars = getAgentV2OutputVars(data)
+        break
+      }
+
       const payload = data as AgentNodeType
       const outputs: Var[] = []
       Object.keys(payload.output_schema?.properties || {}).forEach(
@@ -653,6 +615,11 @@ const formatItem = (
         },
       )
       res.vars = [...outputs, ...TOOL_OUTPUT_STRUCT, ...AGENT_OUTPUT_STRUCT]
+      break
+    }
+
+    case BlockEnum.AgentV2: {
+      res.vars = getAgentV2OutputVars(data as AgentV2NodeType)
       break
     }
 
@@ -757,7 +724,7 @@ const formatItem = (
         (() => {
           const variableArr = v.variable.split('.')
           const [first] = variableArr
-          if (isSpecialVar(first))
+          if (isSpecialVar(first!))
             return variableArr
 
           return [...selector, ...variableArr]
@@ -994,7 +961,6 @@ const getIterationItemType = ({
     case VarType.arrayBoolean:
       return VarType.boolean
     case VarType.arrayObject:
-    case VarType.arrayMessage:
       return VarType.object
     case VarType.array:
       return VarType.arrayObject // Use more specific type instead of any
@@ -1049,7 +1015,6 @@ const getLoopItemType = ({
     case VarType.arrayNumber:
       return VarType.number
     case VarType.arrayObject:
-    case VarType.arrayMessage:
       return VarType.object
     case VarType.arrayBoolean:
       return VarType.boolean
@@ -1207,14 +1172,8 @@ export const getVarType = ({
           return
 
         currProperties = currProperties.properties[key]
-        if (isLast) {
-          if (currProperties?.format === FILE_REF_FORMAT)
-            type = VarType.file
-          else if (currProperties?.type === Type.array && currProperties?.items?.format === FILE_REF_FORMAT)
-            type = VarType.arrayFile
-          else
-            type = structTypeToVarType(currProperties?.type)
-        }
+        if (isLast)
+          type = structTypeToVarType(currProperties?.type)
       })
       return type
     }
@@ -1331,104 +1290,6 @@ export const getNodeInfoById = (nodes: any, id: string) => {
   return nodes.find((node: any) => node.id === id)
 }
 
-const normalizeSpecialValueSelector = (valueSelector: ValueSelector): ValueSelector => {
-  if (valueSelector.length > 1 && isSpecialVar(valueSelector[1]))
-    return valueSelector.slice(1)
-  return valueSelector
-}
-
-const getVarRootSelector = (nodeId: string, variable: string): ValueSelector => {
-  const path = variable.split('.')
-  if (path.length > 0 && isSpecialVar(path[0]))
-    return path
-  return [nodeId, ...path]
-}
-
-const isSelectorPathValidInStructuredProperties = (
-  properties: Record<string, StructField> | undefined,
-  selectorTail: ValueSelector,
-): boolean => {
-  if (!properties)
-    return false
-  if (selectorTail.length === 0)
-    return true
-
-  const [currentKey, ...rest] = selectorTail
-  const property = properties[currentKey]
-  if (!property)
-    return false
-  if (rest.length === 0)
-    return true
-
-  if (property.type === Type.object)
-    return isSelectorPathValidInStructuredProperties(property.properties, rest)
-
-  return false
-}
-
-const isSelectorPathValidInVar = (
-  variable: Var,
-  selectorTail: ValueSelector,
-): boolean => {
-  if (selectorTail.length === 0)
-    return true
-  if (!variable.children)
-    return false
-
-  const structuredProperties = (variable.children as StructuredOutput)?.schema?.properties
-  if (structuredProperties)
-    return isSelectorPathValidInStructuredProperties(structuredProperties, selectorTail)
-
-  if (!Array.isArray(variable.children))
-    return false
-
-  const [currentKey, ...rest] = selectorTail
-  const child = variable.children.find(item => item.variable === currentKey)
-  if (!child)
-    return false
-  return isSelectorPathValidInVar(child, rest)
-}
-
-const isValueSelectorMatchVar = (
-  valueSelector: ValueSelector,
-  nodeId: string,
-  variable: Var,
-): boolean => {
-  const rootSelector = getVarRootSelector(nodeId, variable.variable)
-  if (valueSelector.length < rootSelector.length)
-    return false
-
-  const isRootMatched = rootSelector.every((segment, index) => {
-    return valueSelector[index] === segment
-  })
-  if (!isRootMatched)
-    return false
-
-  const selectorTail = valueSelector.slice(rootSelector.length)
-  return isSelectorPathValidInVar(variable, selectorTail)
-}
-
-export const isValueSelectorInNodeOutputVars = (
-  valueSelector: ValueSelector,
-  nodeOutputVars: NodeOutPutVar[],
-): boolean => {
-  if (!Array.isArray(valueSelector) || valueSelector.length === 0)
-    return false
-
-  const normalizedSelector = normalizeSpecialValueSelector(valueSelector)
-  const selectorsToCheck = [valueSelector]
-  if (normalizedSelector.join('.') !== valueSelector.join('.'))
-    selectorsToCheck.push(normalizedSelector)
-
-  return selectorsToCheck.some((selector) => {
-    return nodeOutputVars.some((nodeOutputVar) => {
-      return nodeOutputVar.vars.some((variable) => {
-        return isValueSelectorMatchVar(selector, nodeOutputVar.nodeId, variable)
-      })
-    })
-  })
-}
-
 const matchNotSystemVars = (prompts: string[]) => {
   if (!prompts)
     return []
@@ -1463,6 +1324,25 @@ const replaceOldVarInText = (
   )
 }
 
+const getPromptItemTexts = (prompt: PromptItem): string[] => {
+  const texts = [prompt.text]
+  if (prompt.jinja2_text)
+    texts.push(prompt.jinja2_text)
+  return texts.filter((text): text is string => !!text)
+}
+
+const replaceOldVarInPromptItem = (
+  prompt: PromptItem,
+  oldVar: ValueSelector,
+  newVar: ValueSelector,
+): PromptItem => ({
+  ...prompt,
+  text: replaceOldVarInText(prompt.text, oldVar, newVar),
+  ...(prompt.jinja2_text !== undefined
+    ? { jinja2_text: replaceOldVarInText(prompt.jinja2_text, oldVar, newVar) }
+    : {}),
+})
+
 export const getNodeUsedVars = (node: Node): ValueSelector[] => {
   const { data } = node
   const { type } = data
@@ -1484,22 +1364,19 @@ export const getNodeUsedVars = (node: Node): ValueSelector[] => {
       let prompts: string[] = []
       if (isChatModel) {
         prompts
-          = (payload.prompt_template as PromptItem[])?.map(p => p.text) || []
+          = (payload.prompt_template as PromptItem[])?.flatMap(getPromptItemTexts) || []
         if (payload.memory?.query_prompt_template)
           prompts.push(payload.memory.query_prompt_template)
       }
       else {
-        prompts = [(payload.prompt_template as PromptItem).text]
+        prompts = getPromptItemTexts(payload.prompt_template as PromptItem)
       }
 
       const inputVars: ValueSelector[] = matchNotSystemVars(prompts)
       const contextVar = (data as LLMNodeType).context?.variable_selector
         ? [(data as LLMNodeType).context?.variable_selector]
         : []
-      const jinja2VarSelectors = payload.prompt_config?.jinja2_variables
-        ?.map(item => item.value_selector)
-        .filter(selector => Array.isArray(selector) && selector.length > 0) || []
-      res = [...inputVars, ...contextVar, ...jinja2VarSelectors]
+      res = [...inputVars, ...contextVar]
       break
     }
     case BlockEnum.KnowledgeRetrieval: {
@@ -1544,19 +1421,6 @@ export const getNodeUsedVars = (node: Node): ValueSelector[] => {
       })
       break
     }
-    case BlockEnum.Command: {
-      const payload = data as CommandNodeType
-      res = matchNotSystemVars([
-        payload.command,
-        payload.working_directory,
-      ])
-      break
-    }
-    case BlockEnum.FileUpload: {
-      const payload = data as FileUploadNodeType
-      res = [payload.variable_selector]
-      break
-    }
     case BlockEnum.QuestionClassifier: {
       const payload = data as QuestionClassifierNodeType
       res = [payload.query_variable_selector]
@@ -1584,17 +1448,42 @@ export const getNodeUsedVars = (node: Node): ValueSelector[] => {
       const mixVars = matchNotSystemVars(
         Object.keys(payload.tool_parameters)
           ?.filter(
-            key => payload.tool_parameters[key].type === ToolVarType.mixed,
+            key => payload.tool_parameters[key]!.type === ToolVarType.mixed,
           )
-          .map(key => payload.tool_parameters[key].value) as string[],
+          .map(key => payload.tool_parameters[key]!.value) as string[],
       )
       const vars
         = Object.keys(payload.tool_parameters)
           .filter(
-            key => payload.tool_parameters[key].type === ToolVarType.variable,
+            key => payload.tool_parameters[key]!.type === ToolVarType.variable,
           )
-          .map(key => payload.tool_parameters[key].value as string) || []
+          .map(key => payload.tool_parameters[key]!.value as string) || []
       res = [...(mixVars as ValueSelector[]), ...(vars as any)]
+      break
+    }
+    case BlockEnum.Agent: {
+      if (isAgentV2NodeData(data)) {
+        const payload = data as AgentV2NodeType
+        res = matchNotSystemVars([payload.agent_task || ''])
+        break
+      }
+
+      const payload = data as AgentNodeType
+      const valueSelectors: ValueSelector[] = []
+      if (!payload.agent_parameters)
+        break
+
+      Object.keys(payload.agent_parameters || {}).forEach((key) => {
+        const { value } = payload.agent_parameters![key]!
+        if (typeof value === 'string')
+          valueSelectors.push(...matchNotSystemVars([value]))
+      })
+      res = valueSelectors
+      break
+    }
+    case BlockEnum.AgentV2: {
+      const payload = data as AgentV2NodeType
+      res = matchNotSystemVars([payload.agent_task || ''])
       break
     }
     case BlockEnum.DataSource: {
@@ -1603,17 +1492,17 @@ export const getNodeUsedVars = (node: Node): ValueSelector[] => {
         Object.keys(payload.datasource_parameters)
           ?.filter(
             key =>
-              payload.datasource_parameters[key].type === ToolVarType.mixed,
+              payload.datasource_parameters[key]!.type === ToolVarType.mixed,
           )
-          .map(key => payload.datasource_parameters[key].value) as string[],
+          .map(key => payload.datasource_parameters[key]!.value) as string[],
       )
       const vars
         = Object.keys(payload.datasource_parameters)
           .filter(
             key =>
-              payload.datasource_parameters[key].type === ToolVarType.variable,
+              payload.datasource_parameters[key]!.type === ToolVarType.variable,
           )
-          .map(key => payload.datasource_parameters[key].value as string)
+          .map(key => payload.datasource_parameters[key]!.value as string)
           || []
       res = [...(mixVars as ValueSelector[]), ...(vars as any)]
       break
@@ -1656,25 +1545,22 @@ export const getNodeUsedVars = (node: Node): ValueSelector[] => {
       break
     }
 
-    case BlockEnum.Agent: {
-      const payload = data as AgentNodeType
-      const valueSelectors: ValueSelector[] = []
-      if (!payload.agent_parameters)
-        break
-
-      Object.keys(payload.agent_parameters || {}).forEach((key) => {
-        const { value } = payload.agent_parameters![key]
-        if (typeof value === 'string')
-          valueSelectors.push(...matchNotSystemVars([value]))
-      })
-      res = valueSelectors
-      break
-    }
-
     case BlockEnum.HumanInput: {
       const payload = data as HumanInputNodeType
       const formContent = payload.form_content
-      res = matchNotSystemVars([formContent])
+      const mailTemplates = payload.delivery_methods.flatMap((method) => {
+        if (method.type !== DeliveryMethodType.Email || !method.config)
+          return []
+        return [method.config.body]
+      })
+      const inputSelectors = payload.inputs.flatMap((input) => {
+        if (input.type === InputVarType.paragraph && input.default.type === 'variable')
+          return [input.default.selector]
+        if (input.type === InputVarType.select && input.option_source.type === 'variable')
+          return [input.option_source.selector]
+        return []
+      })
+      res = [...matchNotSystemVars([formContent, ...mailTemplates]), ...inputSelectors]
       break
     }
   }
@@ -1820,6 +1706,11 @@ export const updateNodeVars = (
       }
       case BlockEnum.Answer: {
         const payload = data as AnswerNodeType
+        payload.answer = replaceOldVarInText(
+          payload.answer,
+          oldVarSelector,
+          newVarSelector,
+        )
         if (payload.variables) {
           payload.variables = payload.variables.map((v) => {
             if (v.value_selector.join('.') === oldVarSelector.join('.'))
@@ -1835,16 +1726,7 @@ export const updateNodeVars = (
         if (isChatModel) {
           payload.prompt_template = (
             payload.prompt_template as PromptItem[]
-          ).map((prompt) => {
-            return {
-              ...prompt,
-              text: replaceOldVarInText(
-                prompt.text,
-                oldVarSelector,
-                newVarSelector,
-              ),
-            }
-          })
+          ).map(prompt => replaceOldVarInPromptItem(prompt, oldVarSelector, newVarSelector))
           if (payload.memory?.query_prompt_template) {
             payload.memory.query_prompt_template = replaceOldVarInText(
               payload.memory.query_prompt_template,
@@ -1854,14 +1736,11 @@ export const updateNodeVars = (
           }
         }
         else {
-          payload.prompt_template = {
-            ...payload.prompt_template,
-            text: replaceOldVarInText(
-              (payload.prompt_template as PromptItem).text,
-              oldVarSelector,
-              newVarSelector,
-            ),
-          }
+          payload.prompt_template = replaceOldVarInPromptItem(
+            payload.prompt_template as PromptItem,
+            oldVarSelector,
+            newVarSelector,
+          )
         }
         if (
           payload.context?.variable_selector?.join('.')
@@ -1938,26 +1817,6 @@ export const updateNodeVars = (
         }
         break
       }
-      case BlockEnum.Command: {
-        const payload = data as CommandNodeType
-        payload.command = replaceOldVarInText(
-          payload.command,
-          oldVarSelector,
-          newVarSelector,
-        )
-        payload.working_directory = replaceOldVarInText(
-          payload.working_directory,
-          oldVarSelector,
-          newVarSelector,
-        )
-        break
-      }
-      case BlockEnum.FileUpload: {
-        const payload = data as FileUploadNodeType
-        if (payload.variable_selector.join('.') === oldVarSelector.join('.'))
-          payload.variable_selector = newVarSelector
-        break
-      }
       case BlockEnum.QuestionClassifier: {
         const payload = data as QuestionClassifierNodeType
         if (
@@ -1969,6 +1828,10 @@ export const updateNodeVars = (
           oldVarSelector,
           newVarSelector,
         )
+        payload.classes = payload.classes.map(topic => ({
+          ...topic,
+          name: replaceOldVarInText(topic.name, oldVarSelector, newVarSelector),
+        }))
         break
       }
       case BlockEnum.HttpRequest: {
@@ -2012,15 +1875,15 @@ export const updateNodeVars = (
       case BlockEnum.Tool: {
         const payload = data as ToolNodeType
         const hasShouldRenameVar = Object.keys(payload.tool_parameters)?.filter(
-          key => payload.tool_parameters[key].type !== ToolVarType.constant,
+          key => payload.tool_parameters[key]!.type !== ToolVarType.constant,
         )
         if (hasShouldRenameVar) {
           Object.keys(payload.tool_parameters).forEach((key) => {
-            const value = payload.tool_parameters[key]
-            const { type } = value
+            const value = payload.tool_parameters[key]!
+            const { type } = value!
             if (
               type === ToolVarType.variable
-              && value.value.join('.') === oldVarSelector.join('.')
+              && value!.value.join('.') === oldVarSelector.join('.')
             ) {
               payload.tool_parameters[key] = {
                 ...value,
@@ -2032,7 +1895,7 @@ export const updateNodeVars = (
               payload.tool_parameters[key] = {
                 ...value,
                 value: replaceOldVarInText(
-                  payload.tool_parameters[key].value as string,
+                  payload.tool_parameters[key]!.value as string,
                   oldVarSelector,
                   newVarSelector,
                 ),
@@ -2042,21 +1905,80 @@ export const updateNodeVars = (
         }
         break
       }
+      case BlockEnum.Agent: {
+        if (isAgentV2NodeData(data)) {
+          const payload = data as AgentV2NodeType
+          payload.agent_task = replaceOldVarInText(
+            payload.agent_task || '',
+            oldVarSelector,
+            newVarSelector,
+          )
+          break
+        }
+
+        const payload = data as AgentNodeType
+        if (payload.agent_parameters) {
+          Object.keys(payload.agent_parameters).forEach((key) => {
+            const value = payload.agent_parameters![key]!
+            const { type } = value!
+
+            if (
+              type === ToolVarType.variable
+              && Array.isArray(value!.value)
+              && value!.value.join('.') === oldVarSelector.join('.')
+            ) {
+              payload.agent_parameters![key] = {
+                ...value,
+                value: newVarSelector,
+              }
+            }
+
+            if (type === ToolVarType.mixed && typeof value!.value === 'string') {
+              payload.agent_parameters![key] = {
+                ...value,
+                value: replaceOldVarInText(
+                  value!.value,
+                  oldVarSelector,
+                  newVarSelector,
+                ),
+              }
+            }
+          })
+        }
+
+        if (payload.memory?.query_prompt_template) {
+          payload.memory.query_prompt_template = replaceOldVarInText(
+            payload.memory.query_prompt_template,
+            oldVarSelector,
+            newVarSelector,
+          )
+        }
+        break
+      }
+      case BlockEnum.AgentV2: {
+        const payload = data as AgentV2NodeType
+        payload.agent_task = replaceOldVarInText(
+          payload.agent_task || '',
+          oldVarSelector,
+          newVarSelector,
+        )
+        break
+      }
       case BlockEnum.DataSource: {
         const payload = data as DataSourceNodeType
         const hasShouldRenameVar = Object.keys(
           payload.datasource_parameters,
         )?.filter(
           key =>
-            payload.datasource_parameters[key].type !== ToolVarType.constant,
+            payload.datasource_parameters[key]!.type !== ToolVarType.constant,
         )
         if (hasShouldRenameVar) {
           Object.keys(payload.datasource_parameters).forEach((key) => {
-            const value = payload.datasource_parameters[key]
-            const { type } = value
+            const value = payload.datasource_parameters[key]!
+            const { type } = value!
             if (
               type === ToolVarType.variable
-              && value.value.join('.') === oldVarSelector.join('.')
+              && value!.value.join('.') === oldVarSelector.join('.')
             ) {
               payload.datasource_parameters[key] = {
                 ...value,
@@ -2068,7 +1990,7 @@ export const updateNodeVars = (
               payload.datasource_parameters[key] = {
                 ...value,
                 value: replaceOldVarInText(
-                  payload.datasource_parameters[key].value as string,
+                  payload.datasource_parameters[key]!.value as string,
                   oldVarSelector,
                   newVarSelector,
                 ),
@@ -2143,6 +2065,31 @@ export const updateNodeVars = (
           oldVarSelector,
           newVarSelector,
         )
+        payload.delivery_methods = payload.delivery_methods.map((method) => {
+          if (method.type !== DeliveryMethodType.Email || !method.config)
+            return method
+
+          return {
+            ...method,
+            config: {
+              ...method.config,
+              body: replaceOldVarInText(
+                method.config.body,
+                oldVarSelector,
+                newVarSelector,
+              ),
+            },
+          }
+        })
+        payload.inputs = payload.inputs.map((input) => {
+          if (input.type === InputVarType.paragraph && input.default.type === 'variable' && input.default.selector.join('.') === oldVarSelector.join('.')) {
+            input.default.selector = newVarSelector
+          }
+          if (input.type === InputVarType.select && input.option_source.type === 'variable' && input.option_source.selector.join('.') === oldVarSelector.join('.')) {
+            input.option_source.selector = newVarSelector
+          }
+          return input
+        })
         break
       }
     }
@@ -2170,20 +2117,15 @@ const varToValueSelectorList = (
     Object.keys(
       (v.children as StructuredOutput)?.schema?.properties || {},
     ).forEach((key) => {
-      const schemaProperty = (v.children as StructuredOutput)?.schema?.properties[key]
-      const type = schemaProperty?.type
+      const type = (v.children as StructuredOutput)?.schema?.properties[key]!.type
       const isArray = type === Type.array
-      const arrayType = schemaProperty?.items?.type
-      const arrayFormat = schemaProperty?.items?.format
+      const arrayType = (v.children as StructuredOutput)?.schema?.properties[
+        key
+      ]!.items?.type
       varToValueSelectorList(
         {
           variable: key,
-          type: structTypeToVarType(
-            isArray ? arrayType! : type,
-            isArray,
-            schemaProperty?.format,
-            arrayFormat,
-          ),
+          type: structTypeToVarType(isArray ? arrayType! : type, isArray),
         },
         [...parentValueSelector, v.variable],
         res,
@@ -2228,8 +2170,19 @@ export const getNodeOutputVars = (
     }
 
     case BlockEnum.LLM: {
+      const vars = [...LLM_OUTPUT_STRUCT]
       const llmNodeData = data as LLMNodeType
-      const vars = getLLMNodeOutputVars(llmNodeData)
+      if (
+        llmNodeData.structured_output_enabled
+        && llmNodeData.structured_output?.schema?.properties
+        && Object.keys(llmNodeData.structured_output.schema.properties).length > 0
+      ) {
+        vars.push({
+          variable: 'structured_output',
+          type: VarType.object,
+          children: llmNodeData.structured_output,
+        })
+      }
       varsToValueSelectorList(vars, [id], res)
       break
     }
@@ -2249,22 +2202,6 @@ export const getNodeOutputVars = (
 
     case BlockEnum.TemplateTransform: {
       varsToValueSelectorList(TEMPLATE_TRANSFORM_OUTPUT_STRUCT, [id], res)
-      break
-    }
-
-    case BlockEnum.Command: {
-      varsToValueSelectorList(COMMAND_OUTPUT_STRUCT, [id], res)
-      break
-    }
-
-    case BlockEnum.FileUpload: {
-      if ((data as FileUploadNodeType).is_array_file) {
-        res.push([id, 'sandbox_path'])
-        res.push([id, 'file_name'])
-      }
-      else {
-        varsToValueSelectorList(FILE_UPLOAD_OUTPUT_STRUCT, [id], res)
-      }
       break
     }
 

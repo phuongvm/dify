@@ -1,21 +1,8 @@
-import type { Viewport } from 'reactflow'
-import type { ConversationVariable, Edge, EnvironmentVariable, Node } from '../../types'
-import type { Features } from '@/app/components/base/features/types'
-
 export type OnlineUser = {
   user_id: string
   username: string
   avatar: string
   sid: string
-}
-
-export type WorkflowOnlineUsers = {
-  workflow_id: string
-  users: OnlineUser[]
-}
-
-export type OnlineUserListResponse = {
-  data: WorkflowOnlineUsers[]
 }
 
 export type CursorPosition = {
@@ -31,7 +18,7 @@ export type NodePanelPresenceUser = {
   avatar?: string | null
 }
 
-export type NodePanelPresenceInfo = NodePanelPresenceUser & {
+type NodePanelPresenceInfo = NodePanelPresenceUser & {
   clientId: string
   timestamp: number
 }
@@ -48,12 +35,7 @@ export type CollaborationState = {
   error?: string
 }
 
-export type GraphSyncData = {
-  nodes: Node[]
-  edges: Edge[]
-}
-
-export type CollaborationEventType
+type CollaborationEventType
   = | 'mouse_move'
     | 'vars_and_features_update'
     | 'sync_request'
@@ -64,15 +46,7 @@ export type CollaborationEventType
     | 'comments_update'
     | 'node_panel_presence'
     | 'app_publish_update'
-    | 'graph_view_active'
-    | 'skill_file_active'
-    | 'skill_file_saved'
-    | 'skill_tree_update'
-    | 'skill_cursor'
-    | 'skill_sync_request'
-    | 'skill_resync_request'
     | 'graph_resync_request'
-    | 'workflow_restore_request'
     | 'workflow_restore_intent'
     | 'workflow_restore_complete'
     | 'workflow_history_action'
@@ -82,21 +56,6 @@ export type CollaborationUpdate = {
   userId: string
   data: Record<string, unknown>
   timestamp: number
-}
-
-export type RestoreRequestData = {
-  versionId: string
-  versionName?: string
-  initiatorUserId: string
-  initiatorName: string
-  graphData: {
-    nodes: Node[]
-    edges: Edge[]
-    viewport?: Viewport
-  }
-  features?: Features
-  environmentVariables?: EnvironmentVariable[]
-  conversationVariables?: ConversationVariable[]
 }
 
 export type RestoreIntentData = {

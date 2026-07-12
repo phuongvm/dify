@@ -1,15 +1,17 @@
 'use client'
 import type { Reducer } from 'react'
+import { Button } from '@langgenius/dify-ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@langgenius/dify-ui/popover'
+import { Select, SelectContent, SelectItem, SelectItemIndicator, SelectItemText, SelectTrigger } from '@langgenius/dify-ui/select'
+import { toast } from '@langgenius/dify-ui/toast'
+import { useQueryClient } from '@tanstack/react-query'
 import { useReducer } from 'react'
 import { useTranslation } from 'react-i18next'
-import Button from '@/app/components/base/button'
-import { SimpleSelect } from '@/app/components/base/select'
-import Toast from '@/app/components/base/toast'
-import Tooltip from '@/app/components/base/tooltip'
 import { LICENSE_LINK } from '@/constants/link'
-import { languages, LanguagesSupported } from '@/i18n-config/language'
+import { languages } from '@/i18n-config/language'
 import Link from '@/next/link'
 import { useRouter, useSearchParams } from '@/next/navigation'
+import { consoleQuery } from '@/service/client'
 import { useOneMoreStep } from '@/service/use-common'
 import { timezones } from '@/utils/timezone'
 import Input from '../components/base/input'
@@ -45,9 +47,28 @@ const reducer: Reducer<IState, IAction> = (state: IState, action: IAction) => {
   }
 }
 
+type SelectOption = {
+  value: string
+  name: string
+}
+
+const LANGUAGE_OPTIONS: SelectOption[] = languages.filter(item => item.supported)
+const TIMEZONE_OPTIONS: SelectOption[] = timezones.map(item => ({
+  value: String(item.value),
+  name: item.name,
+}))
+
+const hasStatus = (error: unknown): error is { status: number } => {
+  return typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && typeof error.status === 'number'
+}
+
 const OneMoreStep = () => {
   const { t } = useTranslation()
   const router = useRouter()
+  const queryClient = useQueryClient()
   const searchParams = useSearchParams()
 
   const [state, dispatch] = useReducer(reducer, {
@@ -56,6 +77,20 @@ const OneMoreStep = () => {
     timezone: 'Asia/Shanghai',
   })
   const { mutateAsync: submitOneMoreStep, isPending } = useOneMoreStep()
+  const selectedLanguage = LANGUAGE_OPTIONS.find(item => item.value === state.interface_language)
+  const selectedTimezone = TIMEZONE_OPTIONS.find(item => item.value === state.timezone)
+
+  const handleLanguageChange = (nextValue: string | null) => {
+    const nextLanguage = LANGUAGE_OPTIONS.find(item => item.value === nextValue)
+    if (nextLanguage)
+      dispatch({ type: 'interface_language', value: nextLanguage.value })
+  }
+
+  const handleTimezoneChange = (nextValue: string | null) => {
+    const nextTimezone = TIMEZONE_OPTIONS.find(item => item.value === nextValue)
+    if (nextTimezone)
+      dispatch({ type: 'timezone', value: nextTimezone.value })
+  }
 
   const handleSubmit = async () => {
     if (isPending)
@@ -66,11 +101,12 @@ const OneMoreStep = () => {
         interface_language: state.interface_language,
         timezone: state.timezone,
       })
-      router.push('/apps')
+      await queryClient.resetQueries({ queryKey: consoleQuery.account.profile.get.key() })
+      router.replace('/')
     }
-    catch (error: any) {
-      if (error && error.status === 400)
-        Toast.notify({ type: 'error', message: t('invalidInvitationCode', { ns: 'login' }) })
+    catch (error: unknown) {
+      if (hasStatus(error) && error.status === 400)
+        toast.error(t('invalidInvitationCode', { ns: 'login' }))
       dispatch({ type: 'failed', payload: null })
     }
   }
@@ -78,28 +114,42 @@ const OneMoreStep = () => {
   return (
     <>
       <div className="mx-auto w-full">
-        <h2 className="text-text-secondary title-4xl-semi-bold">{t('oneMoreStep', { ns: 'login' })}</h2>
-        <p className="mt-1 text-text-tertiary body-md-regular">{t('createSample', { ns: 'login' })}</p>
+        <h2 className="title-4xl-semi-bold text-text-secondary">{t('oneMoreStep', { ns: 'login' })}</h2>
+        <p className="mt-1 body-md-regular text-text-tertiary">{t('createSample', { ns: 'login' })}</p>
       </div>
 
       <div className="mx-auto mt-6 w-full">
         <div className="relative">
           <div className="mb-5">
-            <label className="my-2 flex items-center justify-between text-text-secondary system-md-semibold">
-              {t('invitationCode', { ns: 'login' })}
-              <Tooltip
-                popupContent={(
-                  <div className="w-[256px] text-xs font-medium">
+            <div className="my-2 flex items-center justify-between system-md-semibold text-text-secondary">
+              <label htmlFor="invitation_code">
+                {t('invitationCode', { ns: 'login' })}
+              </label>
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  render={(
+                    <button
+                      type="button"
+                      className="cursor-pointer rounded-sm text-text-accent-secondary outline-hidden focus-visible:ring-1 focus-visible:ring-components-input-border-hover"
+                    >
+                      {t('dontHave', { ns: 'login' })}
+                    </button>
+                  )}
+                />
+                <PopoverContent
+                  placement="top"
+                  popupClassName="w-[256px] px-3 py-2 text-xs font-medium text-text-tertiary"
+                >
+                  <div>
                     <div className="font-medium">{t('sendUsMail', { ns: 'login' })}</div>
                     <div className="cursor-pointer text-xs font-medium text-text-accent-secondary">
                       <a href="mailto:request-invitation@langgenius.ai">request-invitation@langgenius.ai</a>
                     </div>
                   </div>
-                )}
-              >
-                <span className="cursor-pointer text-text-accent-secondary">{t('dontHave', { ns: 'login' })}</span>
-              </Tooltip>
-            </label>
+                </PopoverContent>
+              </Popover>
+            </div>
             <div className="mt-1">
               <Input
                 id="invitation_code"
@@ -113,31 +163,49 @@ const OneMoreStep = () => {
             </div>
           </div>
           <div className="mb-5">
-            <label htmlFor="name" className="my-2 text-text-secondary system-md-semibold">
+            <label htmlFor="interface_language" className="my-2 system-md-semibold text-text-secondary">
               {t('interfaceLanguage', { ns: 'login' })}
             </label>
             <div className="mt-1">
-              <SimpleSelect
-                defaultValue={LanguagesSupported[0]}
-                items={languages.filter(item => item.supported)}
-                onSelect={(item) => {
-                  dispatch({ type: 'interface_language', value: item.value as typeof LanguagesSupported[number] })
-                }}
-              />
+              <Select
+                value={selectedLanguage?.value ?? null}
+                onValueChange={handleLanguageChange}
+              >
+                <SelectTrigger id="interface_language" size="large">
+                  {selectedLanguage?.name ?? t('placeholder.select', { ns: 'common' })}
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGE_OPTIONS.map(item => (
+                    <SelectItem key={item.value} value={item.value}>
+                      <SelectItemText>{item.name}</SelectItemText>
+                      <SelectItemIndicator />
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="mb-4">
-            <label htmlFor="timezone" className="text-text-tertiary system-md-semibold">
+            <label htmlFor="timezone" className="system-md-semibold text-text-tertiary">
               {t('timezone', { ns: 'login' })}
             </label>
             <div className="mt-1">
-              <SimpleSelect
-                defaultValue={state.timezone}
-                items={timezones}
-                onSelect={(item) => {
-                  dispatch({ type: 'timezone', value: item.value as typeof state.timezone })
-                }}
-              />
+              <Select
+                value={selectedTimezone?.value ?? null}
+                onValueChange={handleTimezoneChange}
+              >
+                <SelectTrigger id="timezone" size="large">
+                  {selectedTimezone?.name ?? t('placeholder.select', { ns: 'common' })}
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEZONE_OPTIONS.map(item => (
+                    <SelectItem key={item.value} value={item.value}>
+                      <SelectItemText>{item.name}</SelectItemText>
+                      <SelectItemIndicator />
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div>
@@ -150,11 +218,11 @@ const OneMoreStep = () => {
               {t('go', { ns: 'login' })}
             </Button>
           </div>
-          <div className="mt-2 block w-full text-text-tertiary system-xs-regular">
+          <div className="mt-2 block w-full system-xs-regular text-text-tertiary">
             {t('license.tip', { ns: 'login' })}
             &nbsp;
             <Link
-              className="text-text-accent-secondary system-xs-medium"
+              className="system-xs-medium text-text-accent-secondary"
               target="_blank"
               rel="noopener noreferrer"
               href={LICENSE_LINK}

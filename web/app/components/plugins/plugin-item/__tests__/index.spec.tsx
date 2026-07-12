@@ -1,8 +1,17 @@
+import type { ReactElement } from 'react'
 import type { PluginDeclaration, PluginDetail } from '../../types'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderWithSystemFeatures } from '@/__tests__/utils/mock-system-features'
 import { PluginCategoryEnum, PluginSource } from '../../types'
 import PluginItem from '../index'
+
+const mockEnableMarketplace = vi.fn(() => true)
+
+const render = (ui: ReactElement) =>
+  renderWithSystemFeatures(ui, {
+    systemFeatures: { enable_marketplace: mockEnableMarketplace() },
+  })
 
 const mockTheme = vi.fn(() => 'light')
 vi.mock('@/hooks/use-theme', () => ({
@@ -46,19 +55,60 @@ vi.mock('@/app/components/plugins/install-plugin/hooks/use-refresh-plugin-list',
 }))
 
 const mockLangGeniusVersionInfo = vi.fn(() => ({
+  current_env: '',
   current_version: '1.0.0',
-}))
-vi.mock('@/context/app-context', () => ({
-  useAppContext: () => ({
-    langGeniusVersionInfo: mockLangGeniusVersionInfo(),
-  }),
+  latest_version: '',
+  release_date: '',
+  release_notes: '',
+  version: '',
+  can_auto_update: false,
 }))
 
-const mockEnableMarketplace = vi.fn(() => true)
-vi.mock('@/context/global-public-context', () => ({
-  useGlobalPublicStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ systemFeatures: { enable_marketplace: mockEnableMarketplace() } }),
-}))
+const createLangGeniusVersionInfo = (currentVersion: string) => ({
+  current_env: '',
+  current_version: currentVersion,
+  latest_version: '',
+  release_date: '',
+  release_notes: '',
+  version: '',
+  can_auto_update: false,
+})
+
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    langGeniusVersionInfo: mockLangGeniusVersionInfo(),
+  }))
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    langGeniusVersionInfo: mockLangGeniusVersionInfo(),
+  }))
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    langGeniusVersionInfo: mockLangGeniusVersionInfo(),
+  }))
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    langGeniusVersionInfo: mockLangGeniusVersionInfo(),
+  }))
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    langGeniusVersionInfo: mockLangGeniusVersionInfo(),
+  }))
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
 
 vi.mock('../action', () => ({
   default: ({ onDelete, pluginName }: { onDelete: () => void, pluginName: string }) => (
@@ -114,7 +164,7 @@ const createPluginDeclaration = (overrides: Partial<PluginDeclaration> = {}): Pl
   resource: null,
   plugins: null,
   verified: false,
-  endpoint: {} as unknown as PluginDeclaration['endpoint'],
+  endpoint: undefined as unknown as PluginDeclaration['endpoint'],
   model: null,
   tags: [],
   agent_strategy: null,
@@ -159,7 +209,7 @@ describe('PluginItem', () => {
     mockTheme.mockReturnValue('light')
     mockCurrentPluginID.mockReturnValue(undefined)
     mockEnableMarketplace.mockReturnValue(true)
-    mockLangGeniusVersionInfo.mockReturnValue({ current_version: '1.0.0' })
+    mockLangGeniusVersionInfo.mockReturnValue(createLangGeniusVersionInfo('1.0.0'))
     mockGetValueFromI18nObject.mockImplementation((obj: Record<string, string>) => obj?.en_US || '')
   })
 
@@ -174,7 +224,7 @@ describe('PluginItem', () => {
       // Assert
       expect(screen.getByTestId('plugin-title')).toBeInTheDocument()
       expect(screen.getByTestId('plugin-description')).toBeInTheDocument()
-      expect(screen.getByTestId('corner-mark')).toBeInTheDocument()
+      expect(screen.queryByTestId('corner-mark')).not.toBeInTheDocument()
       expect(screen.getByTestId('version-badge')).toBeInTheDocument()
     })
 
@@ -190,7 +240,7 @@ describe('PluginItem', () => {
       expect(img).toHaveAttribute('alt', `plugin-${plugin.plugin_unique_identifier}-logo`)
     })
 
-    it('should render category label in corner mark', () => {
+    it('should not render category label in corner mark', () => {
       // Arrange
       const plugin = createPluginDetail({
         declaration: createPluginDeclaration({ category: PluginCategoryEnum.model }),
@@ -200,7 +250,7 @@ describe('PluginItem', () => {
       render(<PluginItem plugin={plugin} />)
 
       // Assert
-      expect(screen.getByTestId('corner-mark')).toHaveTextContent('Models')
+      expect(screen.queryByTestId('corner-mark')).not.toBeInTheDocument()
     })
 
     it('should apply custom className', () => {
@@ -313,22 +363,32 @@ describe('PluginItem', () => {
     })
   })
 
-  describe('Extension Category', () => {
-    it('should show endpoints info for extension category', () => {
+  describe('Endpoint Declaration', () => {
+    it('should show endpoints info when declaration has endpoint', () => {
       // Arrange
       const plugin = createPluginDetail({
-        declaration: createPluginDeclaration({ category: PluginCategoryEnum.extension }),
-        endpoints_active: 3,
+        declaration: createPluginDeclaration({
+          category: PluginCategoryEnum.tool,
+          endpoint: {
+            settings: [],
+            endpoints: [
+              { path: '/test', method: 'POST' },
+              { path: '/another-test', method: 'GET' },
+              { path: '/hidden-test', method: 'POST', hidden: true },
+            ],
+          },
+        }),
+        endpoints_active: 0,
       })
 
       // Act
       render(<PluginItem plugin={plugin} />)
 
-      // Assert - The translation includes interpolation
-      expect(screen.getByText(/plugin\.endpointsEnabled/)).toBeInTheDocument()
+      // Assert
+      expect(screen.getByTitle('plugin.endpointsEnabled:{"num":2}')).toBeInTheDocument()
     })
 
-    it('should not show endpoints info for non-extension category', () => {
+    it('should not show endpoints info when declaration has no endpoint', () => {
       // Arrange
       const plugin = createPluginDetail({
         declaration: createPluginDeclaration({ category: PluginCategoryEnum.tool }),
@@ -346,7 +406,7 @@ describe('PluginItem', () => {
   describe('Version Compatibility', () => {
     it('should show warning icon when Dify version is not compatible', () => {
       // Arrange
-      mockLangGeniusVersionInfo.mockReturnValue({ current_version: '0.3.0' })
+      mockLangGeniusVersionInfo.mockReturnValue(createLangGeniusVersionInfo('0.3.0'))
       const plugin = createPluginDetail({
         declaration: createPluginDeclaration({
           meta: { version: '1.0.0', minimum_dify_version: '0.5.0' },
@@ -363,7 +423,7 @@ describe('PluginItem', () => {
 
     it('should not show warning when Dify version is compatible', () => {
       // Arrange
-      mockLangGeniusVersionInfo.mockReturnValue({ current_version: '1.0.0' })
+      mockLangGeniusVersionInfo.mockReturnValue(createLangGeniusVersionInfo('1.0.0'))
       const plugin = createPluginDetail({
         declaration: createPluginDeclaration({
           meta: { version: '1.0.0', minimum_dify_version: '0.5.0' },
@@ -380,7 +440,7 @@ describe('PluginItem', () => {
 
     it('should handle missing current_version gracefully', () => {
       // Arrange
-      mockLangGeniusVersionInfo.mockReturnValue({ current_version: '' })
+      mockLangGeniusVersionInfo.mockReturnValue(createLangGeniusVersionInfo(''))
       const plugin = createPluginDetail()
 
       // Act
@@ -649,6 +709,21 @@ describe('PluginItem', () => {
       // Assert - setCurrentPluginID should not be called
       expect(mockSetCurrentPluginID).not.toHaveBeenCalled()
     })
+
+    it('should only reveal actions on card hover or focus', () => {
+      // Arrange
+      const plugin = createPluginDetail()
+
+      // Act
+      render(<PluginItem plugin={plugin} />)
+
+      // Assert
+      expect(screen.getByTestId('plugin-action').parentElement).toHaveClass(
+        'opacity-0',
+        'group-hover/plugin-item:opacity-100',
+        'focus-within:opacity-100',
+      )
+    })
   })
 
   // ==================== Delete Callback Tests ====================
@@ -857,18 +932,28 @@ describe('PluginItem', () => {
       expect(screen.getByTestId('plugin-title')).toHaveTextContent('')
     })
 
-    it('should handle zero endpoints_active', () => {
+    it('should count declaration endpoints when endpoints_active is zero', () => {
       // Arrange
       const plugin = createPluginDetail({
-        declaration: createPluginDeclaration({ category: PluginCategoryEnum.extension }),
+        declaration: createPluginDeclaration({
+          category: PluginCategoryEnum.extension,
+          endpoint: {
+            settings: [],
+            endpoints: [
+              { path: '/test', method: 'POST' },
+              { path: '/another-test', method: 'GET' },
+              { path: '/third-test', method: 'PUT' },
+            ],
+          },
+        }),
         endpoints_active: 0,
       })
 
       // Act
       render(<PluginItem plugin={plugin} />)
 
-      // Assert - Should still render endpoints info with zero
-      expect(screen.getByText(/plugin\.endpointsEnabled/)).toBeInTheDocument()
+      // Assert
+      expect(screen.getByTitle('plugin.endpointsEnabled:{"num":3}')).toBeInTheDocument()
     })
 
     it('should handle null latest_version', () => {

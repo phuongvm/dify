@@ -22,11 +22,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 import core.app.apps.pipeline.pipeline_runner as module
 from core.app.apps.pipeline.pipeline_runner import PipelineRunner
 from core.app.entities.app_invoke_entities import InvokeFrom, UserFrom
-from dify_graph.graph_events import GraphRunFailedEvent
+from graphon.graph_events import GraphRunFailedEvent
 
 
 def _build_app_generate_entity() -> SimpleNamespace:
@@ -50,6 +51,32 @@ def _build_app_generate_entity() -> SimpleNamespace:
         single_iteration_run=None,
         single_loop_run=None,
     )
+
+
+def _patch_create_session(mocker: MockerFixture, session: MagicMock, *, events: list[str] | None = None):
+    """Patch create_session() to yield ``session`` inside its ``with`` body and ``begin()`` block.
+
+    The runner now obtains short-lived sessions via ``create_session()`` instead of the
+    Flask scoped ``db.session``, so tests patch the module-level ``create_session`` and
+    hand back a context manager that yields the mock session.
+    """
+    session_context = MagicMock()
+
+    def enter_session():
+        if events is not None:
+            events.append("session_enter")
+        return session
+
+    def exit_session(*args):
+        if events is not None:
+            events.append("session_exit")
+        return False
+
+    session_context.__enter__.side_effect = enter_session
+    session_context.__exit__.side_effect = exit_session
+    session.begin.return_value.__enter__.return_value = session
+    session.begin.return_value.__exit__.return_value = False
+    return mocker.patch.object(module, "create_session", return_value=session_context)
 
 
 @pytest.fixture
@@ -76,15 +103,14 @@ def test_get_app_id(runner):
     assert runner._get_app_id() == "pipe"
 
 
-def test_get_workflow_returns_workflow(mocker, runner):
+def test_get_workflow_returns_workflow(runner):
     pipeline = MagicMock(tenant_id="tenant", id="pipe")
     workflow = MagicMock(id="wf")
 
-    query = MagicMock()
-    query.where.return_value.first.return_value = workflow
-    mocker.patch.object(module.db, "session", MagicMock(query=MagicMock(return_value=query)))
+    session = MagicMock()
+    session.scalar.return_value = workflow
 
-    result = runner.get_workflow(pipeline=pipeline, workflow_id="wf")
+    result = runner.get_workflow(session=session, pipeline=pipeline, workflow_id="wf")
 
     assert result == workflow
 
@@ -115,12 +141,9 @@ def test_init_rag_pipeline_graph_not_found(mocker, runner):
 def test_update_document_status_on_failure(mocker, runner):
     document = MagicMock()
 
-    query = MagicMock()
-    query.where.return_value.first.return_value = document
-
     session = MagicMock()
-    session.query.return_value = query
-    mocker.patch.object(module.db, "session", session)
+    session.scalar.return_value = document
+    _patch_create_session(mocker, session)
 
     event = GraphRunFailedEvent(error="boom")
 
@@ -128,21 +151,21 @@ def test_update_document_status_on_failure(mocker, runner):
 
     assert document.indexing_status == "error"
     assert document.error == "boom"
-    session.commit.assert_called_once()
+    session.add.assert_called_once_with(document)
+    session.begin.assert_called_once()
+    session.begin.return_value.__enter__.assert_called_once()
+    session.begin.return_value.__exit__.assert_called_once()
 
 
-def test_run_pipeline_not_found(mocker):
+def test_run_pipeline_not_found(mocker: MockerFixture):
     app_generate_entity = _build_app_generate_entity()
     app_generate_entity.invoke_from = InvokeFrom.WEB_APP
     app_generate_entity.single_iteration_run = None
     app_generate_entity.single_loop_run = None
 
-    query = MagicMock()
-    query.where.return_value.first.return_value = None
-
     session = MagicMock()
-    session.query.return_value = query
-    mocker.patch.object(module.db, "session", session)
+    session.get.side_effect = [None, None]
+    _patch_create_session(mocker, session)
 
     runner = PipelineRunner(
         application_generate_entity=app_generate_entity,
@@ -158,16 +181,14 @@ def test_run_pipeline_not_found(mocker):
         runner.run()
 
 
-def test_run_workflow_not_initialized(mocker):
+def test_run_workflow_not_initialized(mocker: MockerFixture):
     app_generate_entity = _build_app_generate_entity()
 
     pipeline = MagicMock(id="pipe")
-    query_pipeline = MagicMock()
-    query_pipeline.where.return_value.first.return_value = pipeline
 
     session = MagicMock()
-    session.query.return_value = query_pipeline
-    mocker.patch.object(module.db, "session", session)
+    session.get.side_effect = [None, pipeline]
+    _patch_create_session(mocker, session)
 
     runner = PipelineRunner(
         application_generate_entity=app_generate_entity,
@@ -184,20 +205,16 @@ def test_run_workflow_not_initialized(mocker):
         runner.run()
 
 
-def test_run_single_iteration_path(mocker):
+def test_run_single_iteration_path(mocker: MockerFixture):
     app_generate_entity = _build_app_generate_entity()
     app_generate_entity.single_iteration_run = MagicMock()
 
     pipeline = MagicMock(id="pipe")
-    query_pipeline = MagicMock()
-    query_pipeline.where.return_value.first.return_value = pipeline
-
-    query_end_user = MagicMock()
-    query_end_user.where.return_value.first.return_value = MagicMock(session_id="sess")
+    end_user = MagicMock(session_id="sess")
 
     session = MagicMock()
-    session.query.side_effect = [query_end_user, query_pipeline]
-    mocker.patch.object(module.db, "session", session)
+    session.get.side_effect = [end_user, pipeline]
+    _patch_create_session(mocker, session)
 
     runner = PipelineRunner(
         application_generate_entity=app_generate_entity,
@@ -237,19 +254,16 @@ def test_run_single_iteration_path(mocker):
     runner._handle_event.assert_called()
 
 
-def test_run_normal_path_builds_graph(mocker):
+def test_run_normal_path_builds_graph(mocker: MockerFixture):
     app_generate_entity = _build_app_generate_entity()
 
     pipeline = MagicMock(id="pipe")
-    query_pipeline = MagicMock()
-    query_pipeline.where.return_value.first.return_value = pipeline
-
-    query_end_user = MagicMock()
-    query_end_user.where.return_value.first.return_value = MagicMock(session_id="sess")
+    end_user = MagicMock(session_id="sess")
+    events = []
 
     session = MagicMock()
-    session.query.side_effect = [query_end_user, query_pipeline]
-    mocker.patch.object(module.db, "session", session)
+    session.get.side_effect = [end_user, pipeline]
+    _patch_create_session(mocker, session, events=events)
 
     workflow = MagicMock(
         id="wf",
@@ -284,14 +298,20 @@ def test_run_normal_path_builds_graph(mocker):
         return_value=SimpleNamespace(belong_to_node_id="start", variable="input1"),
     )
     mocker.patch.object(module, "RAGPipelineVariableInput", side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
-    mocker.patch.object(module, "VariablePool", side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
+
+    class FakeVariablePool:
+        def add(self, selector, value):
+            return None
+
+    mocker.patch.object(module, "VariablePool", return_value=FakeVariablePool())
 
     workflow_entry = MagicMock()
     workflow_entry.graph_engine = MagicMock()
-    workflow_entry.run.return_value = []
+    workflow_entry.run.side_effect = lambda: events.append("workflow_run") or []
     mocker.patch.object(module, "WorkflowEntry", return_value=workflow_entry)
     mocker.patch.object(module, "WorkflowPersistenceLayer", return_value=MagicMock())
 
     runner.run()
 
+    assert events == ["session_enter", "session_exit", "workflow_run"]
     runner._init_rag_pipeline_graph.assert_called_once()

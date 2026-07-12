@@ -1,18 +1,52 @@
+import type { GetAccountProfileResponse } from '@dify/contracts/api/console/account/types.gen'
 import type { Mock } from 'vitest'
+import type { AppContextStateMockState } from '@/__tests__/utils/mock-app-context-state'
 import type { UsagePlanInfo } from '@/app/components/billing/type'
-import type { AppContextValue } from '@/context/app-context'
+import type { LangGeniusVersionInfo } from '@/context/app-context-types'
 import type { ProviderContextState } from '@/context/provider-context'
-import type { ICurrentWorkspace, LangGeniusVersionResponse, UserProfileResponse } from '@/models/common'
+import type { ICurrentWorkspace } from '@/models/common'
 import { render, screen } from '@testing-library/react'
 import { Plan } from '@/app/components/billing/type'
 import { mailToSupport } from '@/app/components/header/utils/util'
-import { useAppContext } from '@/context/app-context'
 import { baseProviderContextValue, useProviderContext } from '@/context/provider-context'
 import AppsFull from '../index'
 
-vi.mock('@/context/app-context', () => ({
-  useAppContext: vi.fn(),
-}))
+let mockAppContextState: AppContextStateMockState
+const mockUseAppContext = vi.hoisted(() => vi.fn())
+
+vi.mock('@/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/config')>()
+  return {
+    ...actual,
+    IS_CLOUD_EDITION: true,
+  }
+})
+
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => mockAppContextState)
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
 
 vi.mock('@/context/provider-context', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/context/provider-context')>()
@@ -58,8 +92,8 @@ const buildProviderContext = (overrides: Partial<ProviderContextState> = {}): Pr
   ...overrides,
 })
 
-const buildAppContext = (overrides: Partial<AppContextValue> = {}): AppContextValue => {
-  const userProfile: UserProfileResponse = {
+const buildAppContext = (overrides: Partial<AppContextStateMockState> = {}): AppContextStateMockState => {
+  const userProfile: GetAccountProfileResponse = {
     id: 'user-id',
     name: 'Test User',
     email: 'user@example.com',
@@ -79,16 +113,20 @@ const buildAppContext = (overrides: Partial<AppContextValue> = {}): AppContextVa
     trial_credits_used: 0,
     next_credit_reset_date: 0,
   }
-  const langGeniusVersionInfo: LangGeniusVersionResponse = {
+  const langGeniusVersionInfo: LangGeniusVersionInfo = {
     current_env: '',
     current_version: '1.0.0',
     latest_version: '',
     release_date: '',
     release_notes: '',
     version: '',
+    features: {
+      can_replace_logo: false,
+      model_load_balancing_enabled: false,
+    },
     can_auto_update: false,
   }
-  const base: Omit<AppContextValue, 'useSelector'> = {
+  const base: AppContextStateMockState = {
     userProfile,
     currentWorkspace,
     isCurrentWorkspaceManager: false,
@@ -99,12 +137,10 @@ const buildAppContext = (overrides: Partial<AppContextValue> = {}): AppContextVa
     mutateCurrentWorkspace: vi.fn(),
     langGeniusVersionInfo,
     isLoadingCurrentWorkspace: false,
-    isValidatingCurrentWorkspace: false,
+    workspacePermissionKeys: [],
   }
-  const useSelector: AppContextValue['useSelector'] = selector => selector({ ...base, useSelector })
   return {
     ...base,
-    useSelector,
     ...overrides,
   }
 }
@@ -113,7 +149,8 @@ describe('AppsFull', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     ;(useProviderContext as Mock).mockReturnValue(buildProviderContext())
-    ;(useAppContext as Mock).mockReturnValue(buildAppContext())
+    mockAppContextState = buildAppContext()
+    mockUseAppContext.mockReturnValue(mockAppContextState)
     ;(mailToSupport as Mock).mockReturnValue('mailto:support@example.com')
   })
 
@@ -197,8 +234,8 @@ describe('AppsFull', () => {
   })
 
   describe('Edge Cases', () => {
-    it('should apply distinct progress bar styling at different usage levels', () => {
-      const renderWithUsage = (used: number, total: number) => {
+    it('applies neutral / warning / error tone at distinct usage levels', () => {
+      const findToneClass = (used: number, total: number) => {
         ;(useProviderContext as Mock).mockReturnValue(buildProviderContext({
           plan: {
             ...baseProviderContextValue.plan,
@@ -208,19 +245,18 @@ describe('AppsFull', () => {
             reset: { apiRateLimit: null, triggerEvents: null },
           },
         }))
-        const { unmount } = render(<AppsFull loc="billing_dialog" />)
-        const className = screen.getByTestId('billing-progress-bar').className
+        const { container, unmount } = render(<AppsFull loc="billing_dialog" />)
+        const indicator = container.querySelector(
+          '[class*="bg-components-progress-"]:not([class*="progress-bar-bg"])',
+        )
+        const className = indicator?.className ?? ''
         unmount()
         return className
       }
 
-      const normalClass = renderWithUsage(2, 10)
-      const warningClass = renderWithUsage(6, 10)
-      const errorClass = renderWithUsage(8, 10)
-
-      expect(normalClass).not.toBe(warningClass)
-      expect(warningClass).not.toBe(errorClass)
-      expect(normalClass).not.toBe(errorClass)
+      expect(findToneClass(2, 10)).toContain('bg-components-progress-bar-progress-solid')
+      expect(findToneClass(6, 10)).toContain('bg-components-progress-warning-progress')
+      expect(findToneClass(8, 10)).toContain('bg-components-progress-error-progress')
     })
   })
 })

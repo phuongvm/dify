@@ -28,6 +28,9 @@ const createWrapper = () => {
 
 // Mock API hooks - only mock network-related hooks
 const mockGetPluginOAuthClientSchema = vi.fn()
+const mockAppContext = vi.hoisted(() => ({
+  workspacePermissionKeys: ['credential.use', 'credential.create', 'credential.manage'] as string[],
+}))
 
 vi.mock('../../hooks/use-credential', () => ({
   useGetPluginOAuthUrlHook: () => ({
@@ -61,6 +64,42 @@ vi.mock('@/hooks/use-oauth', () => ({
   openOAuthPopup: vi.fn(),
 }))
 
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockAppContext.workspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockAppContext.workspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockAppContext.workspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockAppContext.workspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockAppContext.workspacePermissionKeys,
+  }))
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
+
 // Mock service/use-triggers - API service
 vi.mock('@/service/use-triggers', () => ({
   useTriggerPluginDynamicOptions: () => ({
@@ -84,6 +123,7 @@ const createPluginPayload = (overrides: Partial<PluginPayload> = {}): PluginPayl
 describe('Authorize', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockAppContext.workspacePermissionKeys = ['credential.use', 'credential.create', 'credential.manage']
     mockGetPluginOAuthClientSchema.mockReturnValue({
       schema: [],
       is_oauth_custom_client_enabled: false,
@@ -240,15 +280,15 @@ describe('Authorize', () => {
       })
     })
 
-    describe('disabled prop', () => {
-      it('should disable OAuth button when disabled is true', () => {
+    describe('credential.create permission', () => {
+      it('should disable OAuth button when credential.create is missing', () => {
         const pluginPayload = createPluginPayload()
+        mockAppContext.workspacePermissionKeys = ['credential.use']
 
         render(
           <Authorize
             pluginPayload={pluginPayload}
             canOAuth={true}
-            disabled={true}
           />,
           { wrapper: createWrapper() },
         )
@@ -256,14 +296,14 @@ describe('Authorize', () => {
         expect(screen.getByRole('button')).toBeDisabled()
       })
 
-      it('should disable API Key button when disabled is true', () => {
+      it('should disable API Key button when credential.create is missing', () => {
         const pluginPayload = createPluginPayload()
+        mockAppContext.workspacePermissionKeys = ['credential.use']
 
         render(
           <Authorize
             pluginPayload={pluginPayload}
             canApiKey={true}
-            disabled={true}
           />,
           { wrapper: createWrapper() },
         )
@@ -271,7 +311,7 @@ describe('Authorize', () => {
         expect(screen.getByRole('button')).toBeDisabled()
       })
 
-      it('should not disable buttons when disabled is false', () => {
+      it('should not disable buttons when credential.create is present', () => {
         const pluginPayload = createPluginPayload()
 
         render(
@@ -279,7 +319,6 @@ describe('Authorize', () => {
             pluginPayload={pluginPayload}
             canOAuth={true}
             canApiKey={true}
-            disabled={false}
           />,
           { wrapper: createWrapper() },
         )
@@ -538,15 +577,15 @@ describe('Authorize', () => {
       }).not.toThrow()
     })
 
-    it('should handle both disabled and notAllowCustomCredential together', () => {
+    it('should stay disabled when credential.create is missing and custom credentials are unavailable', () => {
       const pluginPayload = createPluginPayload()
+      mockAppContext.workspacePermissionKeys = ['credential.use']
 
       render(
         <Authorize
           pluginPayload={pluginPayload}
           canOAuth={true}
           canApiKey={true}
-          disabled={true}
           notAllowCustomCredential={true}
         />,
         { wrapper: createWrapper() },
@@ -730,15 +769,15 @@ describe('Authorize', () => {
       expect(buttons.length).toBe(2)
     })
 
-    it('should indicate disabled state for accessibility', () => {
+    it('should indicate permission-disabled state for accessibility', () => {
       const pluginPayload = createPluginPayload()
+      mockAppContext.workspacePermissionKeys = ['credential.use']
 
       render(
         <Authorize
           pluginPayload={pluginPayload}
           canOAuth={true}
           canApiKey={true}
-          disabled={true}
         />,
         { wrapper: createWrapper() },
       )

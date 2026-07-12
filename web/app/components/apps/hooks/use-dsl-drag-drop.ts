@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react'
 
-export type DroppedFileType = 'dsl' | 'bundle'
-
 type DSLDragDropHookProps = {
   onDSLFileDropped: (file: File) => void
-  onBundleFileDropped?: (file: File) => void
   containerRef: React.RefObject<HTMLDivElement | null>
   enabled?: boolean
 }
 
-export const useDSLDragDrop = ({ onDSLFileDropped, onBundleFileDropped, containerRef, enabled = true }: DSLDragDropHookProps) => {
+export const useDSLDragDrop = ({ onDSLFileDropped, containerRef, enabled = true }: DSLDragDropHookProps) => {
   const [dragging, setDragging] = useState(false)
 
   const handleDragEnter = (e: DragEvent) => {
@@ -44,14 +41,8 @@ export const useDSLDragDrop = ({ onDSLFileDropped, onBundleFileDropped, containe
       return
 
     const file = files[0]
-    const fileName = file.name.toLowerCase()
-
-    if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) {
-      onDSLFileDropped(file)
-    }
-    else if (fileName.endsWith('.zip') && onBundleFileDropped) {
-      onBundleFileDropped(file)
-    }
+    if (file!.name.toLowerCase().endsWith('.yaml') || file!.name.toLowerCase().endsWith('.yml'))
+      onDSLFileDropped(file!)
   }
 
   useEffect(() => {

@@ -33,8 +33,8 @@ const ErrorHandleTip = ({
         }}
       >
       </div>
-      <RiAlertFill className="mr-1 h-4 w-4 shrink-0 text-text-warning-secondary" />
-      <div className="grow text-text-primary system-xs-medium">
+      <RiAlertFill className="mr-1 size-4 shrink-0 text-text-warning-secondary" />
+      <div className="grow system-xs-medium text-text-primary">
         {text}
       </div>
     </div>

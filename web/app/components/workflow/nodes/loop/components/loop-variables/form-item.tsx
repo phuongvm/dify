@@ -4,13 +4,13 @@ import type {
 import type {
   Var,
 } from '@/app/components/workflow/types'
+import { Textarea } from '@langgenius/dify-ui/textarea'
 import {
   useCallback,
   useMemo,
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import Input from '@/app/components/base/input'
-import Textarea from '@/app/components/base/textarea'
 import CodeEditor from '@/app/components/workflow/nodes/_base/components/editor/code-editor'
 import VarReferencePicker from '@/app/components/workflow/nodes/_base/components/variable/var-reference-picker'
 import { CodeLanguage } from '@/app/components/workflow/nodes/code/types'
@@ -47,6 +47,10 @@ const FormItem = ({
 
   const handleInputChange = useCallback((e: any) => {
     onChange(e.target.value)
+  }, [onChange])
+
+  const handleValueChange = useCallback((value: string) => {
+    onChange(value)
   }, [onChange])
 
   const handleChange = useCallback((value: any) => {
@@ -92,8 +96,9 @@ const FormItem = ({
       {
         value_type === ValueType.constant && var_type === VarType.string && (
           <Textarea
+            aria-label={item.label}
             value={value}
-            onChange={handleInputChange}
+            onValueChange={handleValueChange}
             className="min-h-12 w-full"
           />
         )
@@ -120,7 +125,7 @@ const FormItem = ({
         value_type === ValueType.constant
         && (var_type === VarType.object || var_type === VarType.arrayString || var_type === VarType.arrayNumber || var_type === VarType.arrayObject)
         && (
-          <div className="w-full rounded-[10px] bg-components-input-bg-normal py-2 pl-3 pr-1" style={{ height: editorMinHeight }}>
+          <div className="w-full rounded-[10px] bg-components-input-bg-normal py-2 pr-1 pl-3" style={{ height: editorMinHeight }}>
             <CodeEditor
               value={value}
               isExpand

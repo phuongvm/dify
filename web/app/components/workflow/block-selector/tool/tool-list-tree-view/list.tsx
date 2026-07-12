@@ -2,30 +2,31 @@
 import type { FC } from 'react'
 import type { BlockEnum, ToolWithProvider } from '../../../types'
 import type { ToolDefaultValue, ToolValue } from '../../types'
+import type { ToolActionPreviewCardHandle } from '../action-item'
 import * as React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AGENT_GROUP_NAME, CUSTOM_GROUP_NAME, WORKFLOW_GROUP_NAME } from '../../index-bar'
 import Item from './item'
 
-type Props = {
+type Props = Readonly<{
   payload: Record<string, ToolWithProvider[]>
+  previewCardHandle: ToolActionPreviewCardHandle
   hasSearchText: boolean
   onSelect: (type: BlockEnum, tool: ToolDefaultValue) => void
   canNotSelectMultiple?: boolean
   onSelectMultiple?: (type: BlockEnum, tools: ToolDefaultValue[]) => void
   selectedTools?: ToolValue[]
-  hideSelectedInfo?: boolean
-}
+}>
 
 const ToolListTreeView: FC<Props> = ({
   payload,
+  previewCardHandle,
   hasSearchText,
   onSelect,
   canNotSelectMultiple,
   onSelectMultiple,
   selectedTools,
-  hideSelectedInfo,
 }) => {
   const { t } = useTranslation()
   const getI18nGroupName = useCallback((name: string) => {
@@ -50,13 +51,13 @@ const ToolListTreeView: FC<Props> = ({
         <Item
           key={groupName}
           groupName={getI18nGroupName(groupName)}
-          toolList={payload[groupName]}
+          toolList={payload[groupName]!}
+          previewCardHandle={previewCardHandle}
           hasSearchText={hasSearchText}
           onSelect={onSelect}
           canNotSelectMultiple={canNotSelectMultiple}
           onSelectMultiple={onSelectMultiple}
           selectedTools={selectedTools}
-          hideSelectedInfo={hideSelectedInfo}
         />
       ))}
     </div>

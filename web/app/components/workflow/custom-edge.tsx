@@ -3,6 +3,7 @@ import type {
   Edge,
   OnSelectBlock,
 } from './types'
+import { cn } from '@langgenius/dify-ui/cn'
 import { intersection } from 'es-toolkit/array'
 import {
   memo,
@@ -17,7 +18,6 @@ import {
   Position,
 } from 'reactflow'
 import { ErrorHandleTypeEnum } from '@/app/components/workflow/nodes/_base/components/error-handle/types'
-import { cn } from '@/utils/classnames'
 import BlockSelector from './block-selector'
 import { ITERATION_CHILDREN_Z_INDEX, LOOP_CHILDREN_Z_INDEX } from './constants'
 import CustomEdgeLinearGradientRender from './custom-edge-linear-gradient-render'
@@ -25,8 +25,7 @@ import {
   useAvailableBlocks,
   useNodesInteractions,
 } from './hooks'
-import { useHooksStore } from './hooks-store'
-import { BlockEnum, NodeRunningStatus } from './types'
+import { NodeRunningStatus } from './types'
 import { getEdgeColor } from './utils'
 
 const CustomEdge = ({
@@ -56,15 +55,15 @@ const CustomEdge = ({
     curvature: 0.16,
   })
   const [open, setOpen] = useState(false)
+  const [isTriggerHovered, setIsTriggerHovered] = useState(false)
   const { handleNodeAdd } = useNodesInteractions()
-  const interactionMode = useHooksStore(s => s.interactionMode)
-  const allowGraphActions = interactionMode !== 'subgraph'
   const { availablePrevBlocks } = useAvailableBlocks((data as Edge['data'])!.targetType, (data as Edge['data'])?.isInIteration || (data as Edge['data'])?.isInLoop)
   const { availableNextBlocks } = useAvailableBlocks((data as Edge['data'])!.sourceType, (data as Edge['data'])?.isInIteration || (data as Edge['data'])?.isInLoop)
   const {
     _sourceRunningStatus,
     _targetRunningStatus,
   } = data
+  const isTriggerVisible = !!(data?._hovering || isTriggerHovered || open)
 
   const linearGradientId = useMemo(() => {
     if (
@@ -139,37 +138,41 @@ const CustomEdge = ({
           stroke,
           strokeWidth: 2,
           opacity: data._dimmed ? 0.3 : (data._waitingRun ? 0.7 : 1),
-          strokeDasharray: (data._isTemp && !data._isSubGraphTemp && data.sourceType !== BlockEnum.Group && data.targetType !== BlockEnum.Group) ? '8 8' : undefined,
+          strokeDasharray: data._isTemp ? '8 8' : undefined,
         }}
       />
-      {allowGraphActions && (
-        <EdgeLabelRenderer>
-          <div
-            className={cn(
-              'nopan nodrag hover:scale-125',
-              data?._hovering ? 'block' : 'hidden',
-              open && '!block',
-              data.isInIteration && `z-[${ITERATION_CHILDREN_Z_INDEX}]`,
-              data.isInLoop && `z-[${LOOP_CHILDREN_Z_INDEX}]`,
-            )}
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              pointerEvents: 'all',
-              opacity: data._waitingRun ? 0.7 : 1,
+      <EdgeLabelRenderer>
+        <div
+          className={cn(
+            'nopan nodrag',
+            'transition-opacity duration-150',
+            data.isInIteration && `z-[${ITERATION_CHILDREN_Z_INDEX}]`,
+            data.isInLoop && `z-[${LOOP_CHILDREN_Z_INDEX}]`,
+          )}
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: isTriggerVisible ? 'all' : 'none',
+            opacity: isTriggerVisible ? (data._waitingRun ? 0.7 : 1) : 0,
+          }}
+          onMouseEnter={() => setIsTriggerHovered(true)}
+          onMouseLeave={() => setIsTriggerHovered(false)}
+        >
+          <BlockSelector
+            open={open}
+            onOpenChange={handleOpenChange}
+            onSelect={handleInsert}
+            snippetInsertPayload={{
+              prevNodeId: source,
+              prevNodeSourceHandle: sourceHandleId || 'source',
+              nextNodeId: target,
+              nextNodeTargetHandle: targetHandleId || 'target',
             }}
-          >
-            <BlockSelector
-              open={open}
-              onOpenChange={handleOpenChange}
-              asChild
-              onSelect={handleInsert}
-              availableBlocksTypes={intersection(availablePrevBlocks, availableNextBlocks)}
-              triggerClassName={() => 'hover:scale-150 transition-all'}
-            />
-          </div>
-        </EdgeLabelRenderer>
-      )}
+            availableBlocksTypes={intersection(availablePrevBlocks, availableNextBlocks)}
+            triggerClassName={() => 'hover:scale-150 transition-all'}
+          />
+        </div>
+      </EdgeLabelRenderer>
     </>
   )
 }

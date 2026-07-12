@@ -32,9 +32,7 @@ for module_name in RESOURCE_MODULES:
 
 # Ensure resource modules are imported so route decorators are evaluated.
 # Import other controllers
-# Sandbox file browser
 from . import (
-    admin,
     apikey,
     extension,
     feature,
@@ -42,19 +40,24 @@ from . import (
     init_validate,
     notification,
     ping,
-    sandbox_files,
     setup,
     spec,
     version,
 )
+from .agent import composer as agent_composer
+from .agent import roster as agent_roster
 
 # Import app controllers
 from .app import (
     advanced_prompt_template,
     agent,
+    agent_app_access,
+    agent_app_feature,
+    agent_app_sandbox,
+    agent_config_inspector,
+    agent_drive_inspector,
     annotation,
     app,
-    app_asset,
     audio,
     completion,
     conversation,
@@ -65,12 +68,12 @@ from .app import (
     model_config,
     ops_trace,
     site,
-    skills,
     statistic,
     workflow,
     workflow_app_log,
     workflow_comment,
     workflow_draft_variable,
+    workflow_node_output_inspector,
     workflow_run,
     workflow_statistic,
     workflow_trigger,
@@ -121,7 +124,8 @@ from .explore import (
     saved_message,
     trial,
 )
-from .socketio import workflow as socketio_workflow  # pyright: ignore[reportUnusedImport]
+from .snippets import snippet_workflow, snippet_workflow_draft_variable
+from .socketio import workflow as socketio_workflow
 
 # Import tag controllers
 from .tag import tags
@@ -136,7 +140,8 @@ from .workspace import (
     model_providers,
     models,
     plugin,
-    sandbox_providers,
+    rbac,
+    snippets,
     tool_providers,
     trigger_providers,
     workspace,
@@ -147,15 +152,20 @@ api.add_namespace(console_ns)
 __all__ = [
     "account",
     "activate",
-    "admin",
     "advanced_prompt_template",
     "agent",
+    "agent_app_access",
+    "agent_app_feature",
+    "agent_app_sandbox",
+    "agent_composer",
+    "agent_config_inspector",
+    "agent_drive_inspector",
     "agent_providers",
+    "agent_roster",
     "annotation",
     "api",
     "apikey",
     "app",
-    "app_asset",
     "audio",
     "banner",
     "billing",
@@ -205,13 +215,15 @@ __all__ = [
     "rag_pipeline_draft_variable",
     "rag_pipeline_import",
     "rag_pipeline_workflow",
+    "rbac",
     "recommended_app",
-    "sandbox_files",
-    "sandbox_providers",
     "saved_message",
     "setup",
     "site",
-    "skills",
+    "snippet_workflow",
+    "snippet_workflow_draft_variable",
+    "snippets",
+    "socketio_workflow",
     "spec",
     "statistic",
     "tags",
@@ -224,6 +236,7 @@ __all__ = [
     "workflow_app_log",
     "workflow_comment",
     "workflow_draft_variable",
+    "workflow_node_output_inspector",
     "workflow_run",
     "workflow_statistic",
     "workflow_trigger",

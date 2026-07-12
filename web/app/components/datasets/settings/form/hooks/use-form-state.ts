@@ -4,18 +4,21 @@ import type { DefaultModel } from '@/app/components/header/account-setting/model
 import type { Member } from '@/models/common'
 import type { IconInfo, SummaryIndexSetting as SummaryIndexSettingType } from '@/models/datasets'
 import type { RetrievalConfig } from '@/types/app'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { toast } from '@langgenius/dify-ui/toast'
+import { useAtomValue } from 'jotai'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from '@/app/components/base/ui/toast'
 import { isReRankModelSelected } from '@/app/components/datasets/common/check-rerank-model'
 import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
 import { useModelList } from '@/app/components/header/account-setting/model-provider-page/hooks'
-import { useSelector as useAppContextWithSelector } from '@/context/app-context'
+import { userProfileIdAtom } from '@/context/account-state'
 import { useDatasetDetailContextWithSelector } from '@/context/dataset-detail'
+import { workspacePermissionKeysAtom } from '@/context/permission-state'
 import { DatasetPermission } from '@/models/datasets'
 import { updateDatasetSetting } from '@/service/datasets'
 import { useInvalidDatasetList } from '@/service/knowledge/use-dataset'
 import { useMembers } from '@/service/use-common'
+import { getDatasetACLCapabilities } from '@/utils/permission'
 import { checkShowMultiModalTip } from '../../utils'
 
 const DEFAULT_APP_ICON: IconInfo = {
@@ -27,9 +30,19 @@ const DEFAULT_APP_ICON: IconInfo = {
 
 export const useFormState = () => {
   const { t } = useTranslation()
-  const isCurrentWorkspaceDatasetOperator = useAppContextWithSelector(state => state.isCurrentWorkspaceDatasetOperator)
   const currentDataset = useDatasetDetailContextWithSelector(state => state.dataset)
   const mutateDatasets = useDatasetDetailContextWithSelector(state => state.mutateDatasetRes)
+  const currentUserId = useAtomValue(userProfileIdAtom)
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
+  const datasetACLCapabilities = useMemo(
+    () => getDatasetACLCapabilities(currentDataset?.permission_keys, {
+      currentUserId,
+      resourceMaintainer: currentDataset?.maintainer,
+      workspacePermissionKeys,
+    }),
+    [currentDataset?.maintainer, currentDataset?.permission_keys, currentUserId, workspacePermissionKeys],
+  )
+  const canEditSettings = datasetACLCapabilities.canEdit
 
   // Basic form state
   const [loading, setLoading] = useState(false)
@@ -39,7 +52,6 @@ export const useFormState = () => {
   // Icon state
   const [iconInfo, setIconInfo] = useState(currentDataset?.icon_info || DEFAULT_APP_ICON)
   const [showAppIconPicker, setShowAppIconPicker] = useState(false)
-  const previousAppIcon = useRef(DEFAULT_APP_ICON)
 
   // Permission state
   const [permission, setPermission] = useState(currentDataset?.permission)
@@ -83,8 +95,7 @@ export const useFormState = () => {
   // Icon handlers
   const handleOpenAppIconPicker = useCallback(() => {
     setShowAppIconPicker(true)
-    previousAppIcon.current = iconInfo
-  }, [iconInfo])
+  }, [])
 
   const handleSelectAppIcon = useCallback((icon: AppIconSelection) => {
     const newIconInfo: IconInfo = {
@@ -94,12 +105,6 @@ export const useFormState = () => {
       icon_url: icon.type === 'emoji' ? undefined : icon.url,
     }
     setIconInfo(newIconInfo)
-    setShowAppIconPicker(false)
-  }, [])
-
-  const handleCloseAppIconPicker = useCallback(() => {
-    setIconInfo(previousAppIcon.current)
-    setShowAppIconPicker(false)
   }, [])
 
   // External retrieval settings handler
@@ -119,6 +124,9 @@ export const useFormState = () => {
 
   // Save handler
   const handleSave = async () => {
+    if (!canEditSettings)
+      return
+
     if (loading)
       return
 
@@ -209,7 +217,7 @@ export const useFormState = () => {
   return {
     // Context values
     currentDataset,
-    isCurrentWorkspaceDatasetOperator,
+    canEditSettings,
 
     // Loading state
     loading,
@@ -223,9 +231,9 @@ export const useFormState = () => {
     // Icon
     iconInfo,
     showAppIconPicker,
+    setShowAppIconPicker,
     handleOpenAppIconPicker,
     handleSelectAppIcon,
-    handleCloseAppIconPicker,
 
     // Permission
     permission,

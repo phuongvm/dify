@@ -1,9 +1,11 @@
 import type { FileAppearanceType } from './types'
+import { cn } from '@langgenius/dify-ui/cn'
 import {
   RiFile3Fill,
   RiFileCodeFill,
   RiFileExcelFill,
   RiFileGifFill,
+  RiFileImageFill,
   RiFileMusicFill,
   RiFilePdf2Fill,
   RiFilePpt2Fill,
@@ -13,9 +15,6 @@ import {
   RiMarkdownFill,
 } from '@remixicon/react'
 import { memo } from 'react'
-import { FileDatabase2Fill } from '@/app/components/base/icons/src/vender/solid/development'
-import { FileImageFill } from '@/app/components/base/icons/src/vender/solid/files'
-import { cn } from '@/utils/classnames'
 import { FileAppearanceTypeEnum } from './types'
 
 const FILE_TYPE_ICON_MAP = {
@@ -24,7 +23,7 @@ const FILE_TYPE_ICON_MAP = {
     color: 'text-[#EA3434]',
   },
   [FileAppearanceTypeEnum.image]: {
-    component: FileImageFill,
+    component: RiFileImageFill,
     color: 'text-[#00B2EA]',
   },
   [FileAppearanceTypeEnum.video]: {
@@ -66,10 +65,6 @@ const FILE_TYPE_ICON_MAP = {
   [FileAppearanceTypeEnum.gif]: {
     component: RiFileGifFill,
     color: 'text-[#00B2EA]',
-  },
-  [FileAppearanceTypeEnum.database]: {
-    component: FileDatabase2Fill,
-    color: 'text-[#A4AAC1]',
   },
 }
 type FileTypeIconProps = {

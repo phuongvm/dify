@@ -1,16 +1,22 @@
 import type { StateCreator } from 'zustand'
 import type {
+  Edge,
   Node,
   TriggerNodeType,
   WorkflowRunningData,
 } from '@/app/components/workflow/types'
 import type { FileUploadConfigResponse } from '@/models/common'
-import type { LLMGenerationItem } from '@/types/workflow'
 
 type PreviewRunningData = WorkflowRunningData & {
   resultTabActive?: boolean
   resultText?: string
-  resultLLMGenerationItems?: LLMGenerationItem[]
+  resultTextSelectorKey?: string
+  // separated-mode reasoning deltas per LLM node id (live preview only)
+  reasoningContent?: Record<string, string>
+  // true once the terminal reasoning marker arrived
+  reasoningFinished?: boolean
+  // human input form schema or data cached when node is in 'Paused' status
+  extraContentAndFormData?: Record<string, unknown>
 }
 
 type MousePosition = {
@@ -18,8 +24,6 @@ type MousePosition = {
   pageY: number
   elementX: number
   elementY: number
-  // human input form schema or data cached when node is in 'Paused' status
-  extraContentAndFormData?: Record<string, any>
 }
 
 export type WorkflowSliceShape = {
@@ -27,6 +31,8 @@ export type WorkflowSliceShape = {
   setWorkflowRunningData: (workflowData: PreviewRunningData) => void
   isListening: boolean
   setIsListening: (listening: boolean) => void
+  canvasReadOnly: boolean
+  setCanvasReadOnly: (readOnly: boolean) => void
   listeningTriggerType: TriggerNodeType | null
   setListeningTriggerType: (triggerType: TriggerNodeType | null) => void
   listeningTriggerNodeId: string | null
@@ -36,7 +42,10 @@ export type WorkflowSliceShape = {
   listeningTriggerIsAll: boolean
   setListeningTriggerIsAll: (isAll: boolean) => void
   clipboardElements: Node[]
+  clipboardEdges: Edge[]
   setClipboardElements: (clipboardElements: Node[]) => void
+  setClipboardEdges: (clipboardEdges: Edge[]) => void
+  setClipboardData: (clipboardData: { nodes: Node[], edges: Edge[] }) => void
   selection: null | { x1: number, y1: number, x2: number, y2: number }
   setSelection: (selection: WorkflowSliceShape['selection']) => void
   bundleNodeSize: { width: number, height: number } | null
@@ -68,6 +77,8 @@ export const createWorkflowSlice: StateCreator<WorkflowSliceShape> = set => ({
   setWorkflowRunningData: workflowRunningData => set(() => ({ workflowRunningData })),
   isListening: false,
   setIsListening: listening => set(() => ({ isListening: listening })),
+  canvasReadOnly: false,
+  setCanvasReadOnly: canvasReadOnly => set(() => ({ canvasReadOnly })),
   listeningTriggerType: null,
   setListeningTriggerType: triggerType => set(() => ({ listeningTriggerType: triggerType })),
   listeningTriggerNodeId: null,
@@ -77,22 +88,21 @@ export const createWorkflowSlice: StateCreator<WorkflowSliceShape> = set => ({
   listeningTriggerIsAll: false,
   setListeningTriggerIsAll: isAll => set(() => ({ listeningTriggerIsAll: isAll })),
   clipboardElements: [],
+  clipboardEdges: [],
   setClipboardElements: clipboardElements => set(() => ({ clipboardElements })),
+  setClipboardEdges: clipboardEdges => set(() => ({ clipboardEdges })),
+  setClipboardData: ({ nodes, edges }) => {
+    set(() => ({
+      clipboardElements: nodes,
+      clipboardEdges: edges,
+    }))
+  },
   selection: null,
   setSelection: selection => set(() => ({ selection })),
   bundleNodeSize: null,
   setBundleNodeSize: bundleNodeSize => set(() => ({ bundleNodeSize })),
-  controlMode: (() => {
-    const storedControlMode = localStorage.getItem('workflow-operation-mode')
-    if (storedControlMode === 'pointer' || storedControlMode === 'hand' || storedControlMode === 'comment')
-      return storedControlMode
-
-    return 'pointer'
-  })(),
-  setControlMode: (controlMode) => {
-    set(() => ({ controlMode }))
-    localStorage.setItem('workflow-operation-mode', controlMode)
-  },
+  controlMode: 'pointer',
+  setControlMode: controlMode => set(() => ({ controlMode })),
   pendingComment: null,
   setPendingComment: pendingComment => set(() => ({ pendingComment })),
   isCommentPlacing: false,

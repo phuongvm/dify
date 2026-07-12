@@ -4,7 +4,7 @@ import type {
   ChatItemInTree,
   Inputs,
 } from '../types'
-import type { InputForm } from './type'
+import type { InputForm, ThoughtItem } from './type'
 import type AudioPlayer from '@/app/components/base/audio-btn/audio'
 import type { FileEntity } from '@/app/components/base/file-uploader/types'
 import type { Annotation } from '@/models/log'
@@ -12,6 +12,9 @@ import type {
   IOnDataMoreInfo,
   IOtherOptions,
 } from '@/service/base'
+import type { VisionFile } from '@/types/app'
+import type { FileResponse, ReasoningChunkResponse } from '@/types/workflow'
+import { toast } from '@langgenius/dify-ui/toast'
 import { uniqBy } from 'es-toolkit/compat'
 import { noop } from 'es-toolkit/function'
 import { produce, setAutoFreeze } from 'immer'
@@ -25,11 +28,13 @@ import {
 import { useTranslation } from 'react-i18next'
 import { v4 as uuidV4 } from 'uuid'
 import { AudioPlayerManager } from '@/app/components/base/audio-btn/audio.player.manager'
+import { enrichSubmittedHumanInputFormData } from '@/app/components/base/chat/chat/answer/human-input-content/submitted-utils'
 import {
   getProcessedFiles,
   getProcessedFilesFromResponse,
 } from '@/app/components/base/file-uploader/utils'
-import { useToastContext } from '@/app/components/base/toast/context'
+import { isInstalledAppPath } from '@/app/components/explore/installed-app/routes'
+import { addFileInfos, sortAgentSorts } from '@/app/components/tools/utils'
 import { NodeRunningStatus, WorkflowRunningStatus } from '@/app/components/workflow/types'
 import useTimestamp from '@/hooks/use-timestamp'
 import { useParams, usePathname } from '@/next/navigation'
@@ -45,11 +50,141 @@ import {
 } from './utils'
 
 type GetAbortController = (abortController: AbortController) => void
+type HistoryMessageFile = Partial<FileResponse> & {
+  id?: string
+  belongs_to?: string
+}
+type HistoryConversationMessage = {
+  id: string
+  answer?: string
+  message?: { role: string, text: string, files?: FileEntity[] }[]
+  message_files?: HistoryMessageFile[]
+  agent_thoughts?: ThoughtItem[] | null
+  retriever_resources?: ChatItem['citation']
+  metadata?: {
+    reasoning?: ChatItem['reasoningContent']
+  }
+  created_at?: number
+  answer_tokens?: number
+  message_tokens?: number
+  provider_response_latency?: number
+  workflow_run_id?: string
+  feedback?: ChatItem['feedback']
+  inputs?: unknown
+  query?: string
+}
+type ConversationMessagesResponse = {
+  data: HistoryConversationMessage[]
+}
 type SendCallback = {
-  onGetConversationMessages?: (conversationId: string, getAbortController: GetAbortController) => Promise<any>
-  onGetSuggestedQuestions?: (responseItemId: string, getAbortController: GetAbortController) => Promise<any>
-  onConversationComplete?: (conversationId: string) => void
+  onGetConversationMessages?: (conversationId: string, getAbortController: GetAbortController) => Promise<unknown>
+  onGetSuggestedQuestions?: (responseItemId: string, getAbortController: GetAbortController) => Promise<unknown>
+  onConversationComplete?: (conversationId: string, workflowRunId?: string) => void
+  onUnhandledEvent?: IOtherOptions['onUnhandledEvent']
+  onSendSettled?: (hasError?: boolean) => void
   isPublicAPI?: boolean
+}
+
+type UseChatOptions = {
+  isNewAgent?: boolean
+  timezone?: string
+}
+
+function mergeStreamingThought(currentThought: ThoughtItem, nextThought: ThoughtItem): ThoughtItem {
+  return {
+    ...nextThought,
+    message_files: nextThought.message_files?.length ? nextThought.message_files : currentThought.message_files,
+  }
+}
+
+function appendAgentResponseMessagePart(responseItem: ChatItemInTree, message: string) {
+  if (!responseItem.agent_response_parts)
+    responseItem.agent_response_parts = []
+
+  const lastPart = responseItem.agent_response_parts.at(-1)
+  if (lastPart?.type === 'message') {
+    lastPart.content += message
+  }
+  else {
+    responseItem.agent_response_parts.push({
+      type: 'message',
+      content: message,
+    })
+  }
+}
+
+function upsertAgentResponseThoughtPart(responseItem: ChatItemInTree, thought: ThoughtItem) {
+  if (!responseItem.agent_response_parts)
+    responseItem.agent_response_parts = []
+
+  const partIndex = responseItem.agent_response_parts.findIndex(part =>
+    part.type === 'thought' && part.thought.id === thought.id,
+  )
+  if (partIndex > -1) {
+    responseItem.agent_response_parts[partIndex] = {
+      type: 'thought',
+      thought,
+    }
+    return
+  }
+
+  responseItem.agent_response_parts.push({
+    type: 'thought',
+    thought,
+  })
+}
+
+function getHistoryAgentThoughts(responseItem: HistoryConversationMessage) {
+  if (!Array.isArray(responseItem.agent_thoughts))
+    return []
+
+  const messageFiles: VisionFile[] = responseItem.message_files?.map(file => ({
+    id: file.id,
+    type: file.type || '',
+    transfer_method: file.transfer_method || TransferMethod.remote_url,
+    url: file.url || '',
+    upload_file_id: file.upload_file_id || '',
+    belongs_to: file.belongs_to,
+  })) || []
+
+  return addFileInfos(sortAgentSorts(responseItem.agent_thoughts), messageFiles)
+}
+
+function toHistoryFileResponse(file: HistoryMessageFile): FileResponse {
+  return {
+    related_id: file.related_id || file.id || '',
+    extension: file.extension || '',
+    filename: file.filename || '',
+    size: file.size || 0,
+    mime_type: file.mime_type || file.type || '',
+    transfer_method: file.transfer_method || TransferMethod.remote_url,
+    type: file.type || '',
+    url: file.url || '',
+    upload_file_id: file.upload_file_id || '',
+    remote_url: file.remote_url || '',
+  }
+}
+
+function getHistoryAnswerFiles(responseItem: HistoryConversationMessage) {
+  const answerFiles = responseItem.message_files?.filter(file => file.belongs_to === 'assistant') || []
+
+  return getProcessedFilesFromResponse(answerFiles.map(file => toHistoryFileResponse({
+    ...file,
+    related_id: file.related_id || file.id || '',
+    upload_file_id: file.upload_file_id || '',
+  })))
+}
+
+function isHistoryConversationMessage(value: unknown): value is HistoryConversationMessage {
+  return typeof value === 'object' && value !== null && typeof (value as { id?: unknown }).id === 'string'
+}
+
+function getConversationMessagesData(response: unknown): ConversationMessagesResponse['data'] {
+  if (typeof response !== 'object' || response === null)
+    return []
+
+  const data = (response as { data?: unknown }).data
+  return Array.isArray(data) ? data.filter(isHistoryConversationMessage) : []
 }
 
 export const useChat = (
@@ -62,11 +197,13 @@ export const useChat = (
   stopChat?: (taskId: string) => void,
   clearChatList?: boolean,
   clearChatListCallback?: (state: boolean) => void,
+  initialConversationId?: string,
+  options: UseChatOptions = {},
 ) => {
   const { t } = useTranslation()
-  const { formatTime } = useTimestamp()
-  const { notify } = useToastContext()
-  const conversationIdRef = useRef('')
+  const { formatTime } = useTimestamp({ timezone: options.timezone })
+  const conversationIdRef = useRef(initialConversationId ?? '')
+  const initialConversationIdRef = useRef(initialConversationId ?? '')
   const hasStopRespondedRef = useRef(false)
   const [isResponding, setIsResponding] = useState(false)
   const isRespondingRef = useRef(false)
@@ -144,6 +281,12 @@ export const useChat = (
     }
   }, [])
 
+  useEffect(() => {
+    initialConversationIdRef.current = initialConversationId ?? ''
+    if (initialConversationId && !conversationIdRef.current)
+      conversationIdRef.current = initialConversationId
+  }, [initialConversationId])
+
   /** Find the target node by bfs and then operate on it */
   const produceChatTreeNode = useCallback((targetId: string, operation: (node: ChatItemInTree) => void) => {
     return produce(chatTreeRef.current, (draft) => {
@@ -202,7 +345,7 @@ export const useChat = (
   }, [stopChat, handleResponding])
 
   const handleRestart = useCallback((cb?: any) => {
-    conversationIdRef.current = ''
+    conversationIdRef.current = initialConversationIdRef.current
     taskIdRef.current = ''
     handleStop()
     setChatTree([])
@@ -218,7 +361,7 @@ export const useChat = (
       ttsIsPublic = true
     }
     else if (params.appId) {
-      if (pathname.search('explore/installed') > -1)
+      if (isInstalledAppPath(pathname))
         ttsUrl = `/installed-apps/${params.appId}/text-to-audio`
       else
         ttsUrl = `/apps/${params.appId}/text-to-audio`
@@ -241,10 +384,19 @@ export const useChat = (
     {
       onGetSuggestedQuestions,
       onConversationComplete,
+      onSendSettled,
       isPublicAPI,
     }: SendCallback,
   ) => {
     const getOrCreatePlayer = createAudioPlayerManager()
+    let hasSettled = false
+    const settleSend = (hasError?: boolean) => {
+      if (hasSettled)
+        return
+
+      hasSettled = true
+      onSendSettled?.(hasError)
+    }
     // Re-subscribe to workflow events for the specific message
     const url = `/workflow/${workflowRunId}/events?include_state_snapshot=true`
 
@@ -253,14 +405,18 @@ export const useChat = (
       getAbortController: (abortController) => {
         workflowEventsAbortControllerRef.current = abortController
       },
-      onData: (message: string, isFirstMessage: boolean, { conversationId: newConversationId, messageId, taskId }: IOnDataMoreInfo) => {
+      onData: (message: string, isFirstMessage: boolean, { event, conversationId: newConversationId, messageId, taskId }: IOnDataMoreInfo) => {
         updateChatTreeNode(messageId, (responseItem) => {
-          const isAgentMode = responseItem.agent_thoughts && responseItem.agent_thoughts.length > 0
-          if (!isAgentMode) {
+          const agentThoughts = responseItem.agent_thoughts ?? []
+          const isNewAgentMessage = options.isNewAgent && (event === 'agent_message' || event === 'message')
+          if (isNewAgentMessage) {
+            appendAgentResponseMessagePart(responseItem, message)
+          }
+          else if (!agentThoughts.length || options.isNewAgent) {
             responseItem.content = responseItem.content + message
           }
           else {
-            const lastThought = responseItem.agent_thoughts?.[responseItem.agent_thoughts?.length - 1]
+            const lastThought = agentThoughts[agentThoughts.length - 1]
             if (lastThought)
               lastThought.thought = lastThought.thought + message
           }
@@ -274,27 +430,42 @@ export const useChat = (
         if (taskId)
           taskIdRef.current = taskId
       },
+      onReasoning: ({ data: reasoningData }: ReasoningChunkResponse) => {
+        const { message_id, reasoning, node_id, is_final } = reasoningData
+        updateChatTreeNode(message_id, (responseItem) => {
+          const reasoningContent = responseItem.reasoningContent || (responseItem.reasoningContent = {})
+          const key = node_id || '_'
+          if (reasoning)
+            reasoningContent[key] = (reasoningContent[key] || '') + reasoning
+          if (is_final)
+            responseItem.reasoningFinished = true
+        })
+      },
       async onCompleted(hasError?: boolean) {
         handleResponding(false)
 
-        if (hasError)
-          return
+        try {
+          if (hasError)
+            return
 
-        if (onConversationComplete)
-          onConversationComplete(conversationIdRef.current)
+          if (onConversationComplete)
+            onConversationComplete(conversationIdRef.current, workflowRunId)
 
-        if (config?.suggested_questions_after_answer?.enabled && !hasStopRespondedRef.current && onGetSuggestedQuestions) {
-          try {
-            const { data }: any = await onGetSuggestedQuestions(
-              messageId,
-              newAbortController => suggestedQuestionsAbortControllerRef.current = newAbortController,
-            )
-            setSuggestedQuestions(data)
+          if (config?.suggested_questions_after_answer?.enabled && !hasStopRespondedRef.current && onGetSuggestedQuestions) {
+            try {
+              const { data }: any = await onGetSuggestedQuestions(
+                messageId,
+                newAbortController => suggestedQuestionsAbortControllerRef.current = newAbortController,
+              )
+              setSuggestedQuestions(data)
+            }
+            catch {
+              setSuggestedQuestions([])
+            }
           }
-          // eslint-disable-next-line unused-imports/no-unused-vars
-          catch (e) {
-            setSuggestedQuestions([])
-          }
+        }
+        finally {
+          settleSend(hasError)
         }
       },
       onFile(file) {
@@ -347,13 +518,15 @@ export const useChat = (
           else {
             const lastThought = responseItem.agent_thoughts.at(-1)
             if (lastThought?.id === thought.id) {
-              thought.thought = lastThought.thought
-              thought.message_files = lastThought.message_files
-              responseItem.agent_thoughts[responseItem.agent_thoughts.length - 1] = thought
+              responseItem.agent_thoughts[responseItem.agent_thoughts.length - 1] = mergeStreamingThought(lastThought, thought)
             }
             else {
               responseItem.agent_thoughts.push(thought)
             }
+          }
+          if (options.isNewAgent) {
+            const currentThought = responseItem.agent_thoughts.find(item => item.id === thought.id) ?? thought
+            upsertAgentResponseThoughtPart(responseItem, currentThought)
           }
         })
       },
@@ -378,13 +551,18 @@ export const useChat = (
       },
       onError() {
         handleResponding(false)
+        settleSend(true)
       },
       onWorkflowStarted: ({ workflow_run_id, task_id }) => {
         handleResponding(true)
         hasStopRespondedRef.current = false
         updateChatTreeNode(messageId, (responseItem) => {
           if (responseItem.workflowProcess && responseItem.workflowProcess.tracing.length > 0) {
-            responseItem.workflowProcess.status = WorkflowRunningStatus.Running
+            responseItem.workflowProcess = {
+              ...responseItem.workflowProcess,
+              status: WorkflowRunningStatus.Running,
+              error: undefined,
+            }
           }
           else {
             taskIdRef.current = task_id
@@ -398,8 +576,13 @@ export const useChat = (
       },
       onWorkflowFinished: ({ data: workflowFinishedData }) => {
         updateChatTreeNode(messageId, (responseItem) => {
-          if (responseItem.workflowProcess)
-            responseItem.workflowProcess.status = workflowFinishedData.status as WorkflowRunningStatus
+          if (responseItem.workflowProcess) {
+            responseItem.workflowProcess = {
+              ...responseItem.workflowProcess,
+              status: workflowFinishedData.status as WorkflowRunningStatus,
+              error: workflowFinishedData.error,
+            }
+          }
         })
       },
       onIterationStart: ({ data: iterationStartedData }) => {
@@ -533,22 +716,26 @@ export const useChat = (
           if (responseItem.workflowProcess?.tracing) {
             const currentTracingIndex = responseItem.workflowProcess.tracing.findIndex(item => item.node_id === humanInputRequiredData.node_id)
             if (currentTracingIndex > -1)
-              responseItem.workflowProcess.tracing[currentTracingIndex].status = NodeRunningStatus.Paused
+              responseItem.workflowProcess.tracing[currentTracingIndex]!.status = NodeRunningStatus.Paused
           }
         })
       },
       onHumanInputFormFilled: ({ data: humanInputFilledFormData }) => {
         updateChatTreeNode(messageId, (responseItem) => {
+          let requiredFormData: NonNullable<ChatItem['humanInputFormDataList']>[number] | undefined
           if (responseItem.humanInputFormDataList?.length) {
             const currentFormIndex = responseItem.humanInputFormDataList.findIndex(item => item.node_id === humanInputFilledFormData.node_id)
-            if (currentFormIndex > -1)
+            if (currentFormIndex > -1) {
+              requiredFormData = responseItem.humanInputFormDataList[currentFormIndex]
               responseItem.humanInputFormDataList.splice(currentFormIndex, 1)
+            }
           }
+          const enrichedHumanInputFilledFormData = enrichSubmittedHumanInputFormData(humanInputFilledFormData, requiredFormData)
           if (!responseItem.humanInputFilledFormDataList) {
-            responseItem.humanInputFilledFormDataList = [humanInputFilledFormData]
+            responseItem.humanInputFilledFormDataList = [enrichedHumanInputFilledFormData]
           }
           else {
-            responseItem.humanInputFilledFormDataList.push(humanInputFilledFormData)
+            responseItem.humanInputFilledFormDataList.push(enrichedHumanInputFilledFormData)
           }
         })
       },
@@ -556,8 +743,7 @@ export const useChat = (
         updateChatTreeNode(messageId, (responseItem) => {
           if (responseItem.humanInputFormDataList?.length) {
             const currentFormIndex = responseItem.humanInputFormDataList.findIndex(item => item.node_id === humanInputFormTimeoutData.node_id)
-            if (currentFormIndex > -1)
-              responseItem.humanInputFormDataList[currentFormIndex].expiration_time = humanInputFormTimeoutData.expiration_time
+            responseItem.humanInputFormDataList[currentFormIndex]!.expiration_time = humanInputFormTimeoutData.expiration_time
           }
         })
       },
@@ -583,7 +769,7 @@ export const useChat = (
       {},
       otherOptions,
     )
-  }, [updateChatTreeNode, handleResponding, createAudioPlayerManager, config?.suggested_questions_after_answer])
+  }, [updateChatTreeNode, handleResponding, createAudioPlayerManager, config?.suggested_questions_after_answer, options.isNewAgent])
 
   const updateCurrentQAOnTree = useCallback(({
     parentId,
@@ -631,13 +817,15 @@ export const useChat = (
       onGetConversationMessages,
       onGetSuggestedQuestions,
       onConversationComplete,
+      onUnhandledEvent,
+      onSendSettled,
       isPublicAPI,
     }: SendCallback,
   ) => {
     setSuggestedQuestions([])
 
     if (isRespondingRef.current) {
-      notify({ type: 'info', message: t('errorMessage.waitForResponse', { ns: 'appDebug' }) })
+      toast.info(t('errorMessage.waitForResponse', { ns: 'appDebug' }))
       return false
     }
 
@@ -683,13 +871,14 @@ export const useChat = (
     handleResponding(true)
     hasStopRespondedRef.current = false
 
-    const { query, files, inputs, ...restData } = data
+    const { query, files, inputs, overrideInputsForm, ...restData } = data
+    const requestInputsForm = overrideInputsForm ?? formSettings?.inputsForm ?? []
     const bodyParams = {
       response_mode: 'streaming',
       conversation_id: conversationIdRef.current,
       files: getProcessedFiles(files || []),
       query,
-      inputs: getProcessedInputs(inputs || {}, formSettings?.inputsForm || []),
+      inputs: getProcessedInputs(inputs || {}, requestInputsForm),
       ...restData,
     }
     if (bodyParams?.files?.length) {
@@ -706,111 +895,33 @@ export const useChat = (
 
     let isAgentMode = false
     let hasSetResponseId = false
+    let hasSettled = false
+    const settleSend = (hasError?: boolean) => {
+      if (hasSettled)
+        return
+
+      hasSettled = true
+      onSendSettled?.(hasError)
+    }
 
     const getOrCreatePlayer = createAudioPlayerManager()
-    let toolCallId = ''
-    let thoughtId = ''
 
     const otherOptions: IOtherOptions = {
       isPublicAPI,
+      onUnhandledEvent,
       getAbortController: (abortController) => {
         workflowEventsAbortControllerRef.current = abortController
       },
-      onData: (message: string, isFirstMessage: boolean, {
-        conversationId: newConversationId,
-        messageId,
-        taskId,
-        chunk_type,
-        tool_icon,
-        tool_icon_dark,
-        tool_name,
-        tool_arguments,
-        tool_files,
-        tool_error,
-        tool_elapsed_time,
-      }: any) => {
-        if (!isAgentMode) {
-          if (chunk_type === 'text' || !chunk_type) {
-            responseItem.content = responseItem.content + message
-
-            if (!responseItem.llmGenerationItems)
-              responseItem.llmGenerationItems = []
-
-            const isNotCompletedTextItemIndex = responseItem.llmGenerationItems.findIndex(item => item.type === 'text' && !item.textCompleted)
-            if (isNotCompletedTextItemIndex > -1) {
-              responseItem.llmGenerationItems[isNotCompletedTextItemIndex].text += message
-            }
-            else {
-              toolCallId = uuidV4()
-              responseItem.llmGenerationItems.push({
-                id: toolCallId,
-                type: 'text',
-                text: message,
-              })
-            }
-          }
-
-          if (chunk_type === 'tool_call') {
-            if (!responseItem.llmGenerationItems)
-              responseItem.llmGenerationItems = []
-
-            const isNotCompletedTextItemIndex = responseItem.llmGenerationItems.findIndex(item => item.type === 'text' && !item.textCompleted)
-            if (isNotCompletedTextItemIndex > -1)
-              responseItem.llmGenerationItems[isNotCompletedTextItemIndex].textCompleted = true
-
-            toolCallId = uuidV4()
-            responseItem.llmGenerationItems.push({
-              id: toolCallId,
-              type: 'tool',
-              toolName: tool_name,
-              toolArguments: tool_arguments,
-              toolIcon: tool_icon,
-              toolIconDark: tool_icon_dark,
-            })
-          }
-
-          if (chunk_type === 'tool_result') {
-            const currentToolCallIndex = responseItem.llmGenerationItems?.findIndex(item => item.id === toolCallId) ?? -1
-            if (currentToolCallIndex > -1) {
-              responseItem.llmGenerationItems![currentToolCallIndex].toolError = tool_error
-              responseItem.llmGenerationItems![currentToolCallIndex].toolDuration = tool_elapsed_time
-              responseItem.llmGenerationItems![currentToolCallIndex].toolFiles = tool_files
-              responseItem.llmGenerationItems![currentToolCallIndex].toolOutput = message
-            }
-          }
-
-          if (chunk_type === 'thought_start') {
-            if (!responseItem.llmGenerationItems)
-              responseItem.llmGenerationItems = []
-
-            const isNotCompletedTextItemIndex = responseItem.llmGenerationItems.findIndex(item => item.type === 'text' && !item.textCompleted)
-            if (isNotCompletedTextItemIndex > -1)
-              responseItem.llmGenerationItems[isNotCompletedTextItemIndex].textCompleted = true
-
-            thoughtId = uuidV4()
-            responseItem.llmGenerationItems.push({
-              id: thoughtId,
-              type: 'thought',
-              thoughtOutput: '',
-            })
-          }
-
-          if (chunk_type === 'thought') {
-            const currentThoughtIndex = responseItem.llmGenerationItems?.findIndex(item => item.id === thoughtId) ?? -1
-            if (currentThoughtIndex > -1)
-              responseItem.llmGenerationItems![currentThoughtIndex].thoughtOutput += message
-          }
-
-          if (chunk_type === 'thought_end') {
-            const currentThoughtIndex = responseItem.llmGenerationItems?.findIndex(item => item.id === thoughtId) ?? -1
-            if (currentThoughtIndex > -1) {
-              responseItem.llmGenerationItems![currentThoughtIndex].thoughtOutput += message
-              responseItem.llmGenerationItems![currentThoughtIndex].thoughtCompleted = true
-            }
-          }
+      onData: (message: string, isFirstMessage: boolean, { event, conversationId: newConversationId, messageId, taskId }: any) => {
+        const isNewAgentMessage = options.isNewAgent && (event === 'agent_message' || event === 'message')
+        if (isNewAgentMessage) {
+          appendAgentResponseMessagePart(responseItem, message)
+        }
+        else if (!isAgentMode || options.isNewAgent) {
+          responseItem.content = responseItem.content + message
         }
         else {
-          const lastThought = responseItem.agent_thoughts?.[responseItem.agent_thoughts?.length - 1]
+          const lastThought = responseItem.agent_thoughts?.[responseItem.agent_thoughts.length - 1]
           if (lastThought)
             lastThought.thought = lastThought.thought + message // need immer setAutoFreeze
         }
@@ -836,65 +947,108 @@ export const useChat = (
           parentId: data.parent_message_id,
         })
       },
+      onReasoning: ({ data: reasoningData }: ReasoningChunkResponse) => {
+        const { reasoning, node_id, is_final } = reasoningData
+        const reasoningContent = responseItem.reasoningContent || (responseItem.reasoningContent = {})
+        const key = node_id || '_'
+        if (reasoning)
+          reasoningContent[key] = (reasoningContent[key] || '') + reasoning
+        if (is_final)
+          responseItem.reasoningFinished = true
+
+        updateCurrentQAOnTree({
+          placeholderQuestionId,
+          questionItem,
+          responseItem,
+          parentId: data.parent_message_id,
+        })
+      },
       async onCompleted(hasError?: boolean) {
         handleResponding(false)
 
-        if (hasError)
-          return
-
-        if (onConversationComplete)
-          onConversationComplete(conversationIdRef.current)
-
-        if (conversationIdRef.current && !hasStopRespondedRef.current && onGetConversationMessages) {
-          const { data }: any = await onGetConversationMessages(
-            conversationIdRef.current,
-            newAbortController => conversationMessagesAbortControllerRef.current = newAbortController,
-          )
-          const newResponseItem = data.find((item: any) => item.id === responseItem.id)
-          if (!newResponseItem)
+        try {
+          if (hasError)
             return
 
-          const isUseAgentThought = newResponseItem.agent_thoughts?.length > 0 && newResponseItem.agent_thoughts[newResponseItem.agent_thoughts?.length - 1].thought === newResponseItem.answer
-          updateChatTreeNode(responseItem.id, {
-            content: isUseAgentThought ? '' : newResponseItem.answer,
-            log: [
-              ...newResponseItem.message,
-              ...(newResponseItem.message.at(-1).role !== 'assistant'
-                ? [
-                    {
-                      role: 'assistant',
-                      text: newResponseItem.answer,
-                      files: newResponseItem.message_files?.filter((file: any) => file.belongs_to === 'assistant') || [],
-                    },
-                  ]
-                : []),
-            ],
-            more: {
-              time: formatTime(newResponseItem.created_at, 'hh:mm A'),
-              tokens: newResponseItem.answer_tokens + newResponseItem.message_tokens,
-              latency: newResponseItem.provider_response_latency.toFixed(2),
-              tokens_per_second: newResponseItem.provider_response_latency > 0 ? (newResponseItem.answer_tokens / newResponseItem.provider_response_latency).toFixed(2) : undefined,
-            },
-            // for agent log
-            conversationId: conversationIdRef.current,
-            input: {
-              inputs: newResponseItem.inputs,
-              query: newResponseItem.query,
-            },
-          })
-        }
-        if (config?.suggested_questions_after_answer?.enabled && !hasStopRespondedRef.current && onGetSuggestedQuestions) {
-          try {
-            const { data }: any = await onGetSuggestedQuestions(
-              responseItem.id,
-              newAbortController => suggestedQuestionsAbortControllerRef.current = newAbortController,
+          let completedWorkflowRunId = responseItem.workflow_run_id
+
+          if (conversationIdRef.current && !hasStopRespondedRef.current && onGetConversationMessages) {
+            const conversationMessagesResponse = await onGetConversationMessages(
+              conversationIdRef.current,
+              newAbortController => conversationMessagesAbortControllerRef.current = newAbortController,
             )
-            setSuggestedQuestions(data)
+            const data = getConversationMessagesData(conversationMessagesResponse)
+            const newResponseItem = data.find(item => item.id === responseItem.id)
+            completedWorkflowRunId = newResponseItem?.workflow_run_id ?? completedWorkflowRunId
+            if (!newResponseItem)
+              return onConversationComplete?.(conversationIdRef.current, completedWorkflowRunId)
+
+            const historyAgentThoughts = getHistoryAgentThoughts(newResponseItem)
+            const hasHistoryAgentThoughtAnswer = historyAgentThoughts.some(thought => thought.answer?.trim())
+            const lastHistoryAgentThought = historyAgentThoughts.at(-1)
+            const historyAnswer = newResponseItem.answer || ''
+            const isUseAgentThought = (lastHistoryAgentThought?.thought === historyAnswer) || (options.isNewAgent && hasHistoryAgentThoughtAnswer)
+            const messageLog = Array.isArray(newResponseItem.message) ? newResponseItem.message : []
+            const answerTokens = newResponseItem.answer_tokens ?? 0
+            const messageTokens = newResponseItem.message_tokens ?? 0
+            const providerResponseLatency = newResponseItem.provider_response_latency ?? 0
+            const historyAnswerFiles = getHistoryAnswerFiles(newResponseItem)
+            updateChatTreeNode(responseItem.id, {
+              content: isUseAgentThought ? '' : historyAnswer,
+              agent_thoughts: historyAgentThoughts,
+              agent_response_parts: undefined,
+              citation: newResponseItem.retriever_resources,
+              reasoningContent: newResponseItem.metadata?.reasoning,
+              reasoningFinished: true,
+              message_files: historyAnswerFiles,
+              allFiles: undefined,
+              workflowProcess: undefined,
+              workflow_run_id: newResponseItem.workflow_run_id ?? completedWorkflowRunId,
+              feedback: newResponseItem.feedback,
+              log: [
+                ...messageLog,
+                ...(messageLog.at(-1)?.role !== 'assistant'
+                  ? [
+                      {
+                        role: 'assistant',
+                        text: historyAnswer,
+                        files: historyAnswerFiles,
+                      },
+                    ]
+                  : []),
+              ],
+              more: {
+                time: formatTime(newResponseItem.created_at ?? Date.now(), 'hh:mm A'),
+                tokens: answerTokens + messageTokens,
+                latency: providerResponseLatency.toFixed(2),
+                tokens_per_second: providerResponseLatency > 0 ? (answerTokens / providerResponseLatency).toFixed(2) : undefined,
+              },
+              // for agent log
+              conversationId: conversationIdRef.current,
+              input: {
+                inputs: newResponseItem.inputs,
+                query: newResponseItem.query,
+              },
+            })
           }
-          // eslint-disable-next-line unused-imports/no-unused-vars
-          catch (e) {
-            setSuggestedQuestions([])
+
+          onConversationComplete?.(conversationIdRef.current, completedWorkflowRunId)
+
+          if (config?.suggested_questions_after_answer?.enabled && !hasStopRespondedRef.current && onGetSuggestedQuestions) {
+            try {
+              const { data }: any = await onGetSuggestedQuestions(
+                responseItem.id,
+                newAbortController => suggestedQuestionsAbortControllerRef.current = newAbortController,
+              )
+              setSuggestedQuestions(data)
+            }
+            catch {
+              setSuggestedQuestions([])
+            }
           }
+        }
+        finally {
+          settleSend(hasError)
         }
       },
       onFile(file) {
@@ -955,13 +1109,15 @@ export const useChat = (
           const lastThought = response.agent_thoughts.at(-1)
           // thought changed but still the same thought, so update.
           if (lastThought.id === thought.id) {
-            thought.thought = lastThought.thought
-            thought.message_files = lastThought.message_files
-            responseItem.agent_thoughts![response.agent_thoughts.length - 1] = thought
+            responseItem.agent_thoughts![response.agent_thoughts.length - 1] = mergeStreamingThought(lastThought, thought)
           }
           else {
             responseItem.agent_thoughts!.push(thought)
           }
+        }
+        if (options.isNewAgent) {
+          const currentThought = responseItem.agent_thoughts?.find(item => item.id === thought.id) ?? thought
+          upsertAgentResponseThoughtPart(responseItem, currentThought)
         }
         updateCurrentQAOnTree({
           placeholderQuestionId,
@@ -1002,6 +1158,7 @@ export const useChat = (
       },
       onError() {
         handleResponding(false)
+        settleSend(true)
         updateCurrentQAOnTree({
           placeholderQuestionId,
           questionItem,
@@ -1022,7 +1179,11 @@ export const useChat = (
         }
 
         if (responseItem.workflowProcess && responseItem.workflowProcess.tracing.length > 0) {
-          responseItem.workflowProcess.status = WorkflowRunningStatus.Running
+          responseItem.workflowProcess = {
+            ...responseItem.workflowProcess,
+            status: WorkflowRunningStatus.Running,
+            error: undefined,
+          }
         }
         else {
           taskIdRef.current = task_id
@@ -1042,7 +1203,11 @@ export const useChat = (
       onWorkflowFinished: ({ data: workflowFinishedData }) => {
         if (pausedStateRef.current)
           pausedStateRef.current = false
-        responseItem.workflowProcess!.status = workflowFinishedData.status as WorkflowRunningStatus
+        responseItem.workflowProcess = {
+          ...responseItem.workflowProcess!,
+          status: workflowFinishedData.status as WorkflowRunningStatus,
+          error: workflowFinishedData.error,
+        }
         updateCurrentQAOnTree({
           placeholderQuestionId,
           questionItem,
@@ -1191,7 +1356,7 @@ export const useChat = (
         }
         const currentTracingIndex = responseItem.workflowProcess!.tracing!.findIndex(item => item.node_id === humanInputRequiredData.node_id)
         if (currentTracingIndex > -1) {
-          responseItem.workflowProcess!.tracing[currentTracingIndex].status = NodeRunningStatus.Paused
+          responseItem.workflowProcess!.tracing[currentTracingIndex]!.status = NodeRunningStatus.Paused
           updateCurrentQAOnTree({
             placeholderQuestionId,
             questionItem,
@@ -1201,16 +1366,20 @@ export const useChat = (
         }
       },
       onHumanInputFormFilled: ({ data: humanInputFilledFormData }) => {
+        let requiredFormData: NonNullable<ChatItem['humanInputFormDataList']>[number] | undefined
         if (responseItem.humanInputFormDataList?.length) {
           const currentFormIndex = responseItem.humanInputFormDataList!.findIndex(item => item.node_id === humanInputFilledFormData.node_id)
-          if (currentFormIndex > -1)
+          if (currentFormIndex > -1) {
+            requiredFormData = responseItem.humanInputFormDataList[currentFormIndex]
             responseItem.humanInputFormDataList.splice(currentFormIndex, 1)
+          }
         }
+        const enrichedHumanInputFilledFormData = enrichSubmittedHumanInputFormData(humanInputFilledFormData, requiredFormData)
         if (!responseItem.humanInputFilledFormDataList) {
-          responseItem.humanInputFilledFormDataList = [humanInputFilledFormData]
+          responseItem.humanInputFilledFormDataList = [enrichedHumanInputFilledFormData]
         }
         else {
-          responseItem.humanInputFilledFormDataList.push(humanInputFilledFormData)
+          responseItem.humanInputFilledFormDataList.push(enrichedHumanInputFilledFormData)
         }
         updateCurrentQAOnTree({
           placeholderQuestionId,
@@ -1222,8 +1391,7 @@ export const useChat = (
       onHumanInputFormTimeout: ({ data: humanInputFormTimeoutData }) => {
         if (responseItem.humanInputFormDataList?.length) {
           const currentFormIndex = responseItem.humanInputFormDataList!.findIndex(item => item.node_id === humanInputFormTimeoutData.node_id)
-          if (currentFormIndex > -1)
-            responseItem.humanInputFormDataList[currentFormIndex].expiration_time = humanInputFormTimeoutData.expiration_time
+          responseItem.humanInputFormDataList[currentFormIndex]!.expiration_time = humanInputFormTimeoutData.expiration_time
         }
         updateCurrentQAOnTree({
           placeholderQuestionId,
@@ -1269,16 +1437,16 @@ export const useChat = (
     config?.suggested_questions_after_answer,
     updateCurrentQAOnTree,
     updateChatTreeNode,
-    notify,
     handleResponding,
     formatTime,
     createAudioPlayerManager,
     formSettings,
+    options.isNewAgent,
   ])
 
   const handleAnnotationEdited = useCallback((query: string, answer: string, index: number) => {
-    const targetQuestionId = chatList[index - 1].id
-    const targetAnswerId = chatList[index].id
+    const targetQuestionId = chatList[index - 1]!.id
+    const targetAnswerId = chatList[index]!.id
 
     updateChatTreeNode(targetQuestionId, {
       content: query,
@@ -1286,22 +1454,22 @@ export const useChat = (
     updateChatTreeNode(targetAnswerId, {
       content: answer,
       annotation: {
-        ...chatList[index].annotation,
+        ...chatList[index]!.annotation,
         logAnnotation: undefined,
       } as any,
     })
   }, [chatList, updateChatTreeNode])
 
   const handleAnnotationAdded = useCallback((annotationId: string, authorName: string, query: string, answer: string, index: number) => {
-    const targetQuestionId = chatList[index - 1].id
-    const targetAnswerId = chatList[index].id
+    const targetQuestionId = chatList[index - 1]!.id
+    const targetAnswerId = chatList[index]!.id
 
     updateChatTreeNode(targetQuestionId, {
       content: query,
     })
 
     updateChatTreeNode(targetAnswerId, {
-      content: chatList[index].content,
+      content: chatList[index]!.content,
       annotation: {
         id: annotationId,
         authorName,
@@ -1318,12 +1486,12 @@ export const useChat = (
   }, [chatList, updateChatTreeNode])
 
   const handleAnnotationRemoved = useCallback((index: number) => {
-    const targetAnswerId = chatList[index].id
+    const targetAnswerId = chatList[index]!.id
 
     updateChatTreeNode(targetAnswerId, {
-      content: chatList[index].content,
+      content: chatList[index]!.content,
       annotation: {
-        ...chatList[index].annotation,
+        ...chatList[index]!.annotation,
         id: '',
       } as Annotation,
     })

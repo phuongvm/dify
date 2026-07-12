@@ -1,5 +1,6 @@
 import { API_PREFIX } from '@/config'
 import { fetchWithRetry } from '@/utils'
+import { isClient } from '@/utils/client'
 
 const LOCAL_STORAGE_KEY = 'is_other_tab_refreshing'
 const LAST_REFRESH_TIME_KEY = 'last_refresh_time'
@@ -126,6 +127,9 @@ function releaseRefreshLock() {
 }
 
 export async function refreshAccessTokenOrReLogin(timeout: number) {
+  if (!isClient)
+    return Promise.reject(new Error('refresh token is client-only'))
+
   return Promise.race([new Promise<void>((resolve, reject) => setTimeout(() => {
     releaseRefreshLock()
     reject(new Error('request timeout'))

@@ -1,15 +1,17 @@
 import type { Node, NodeOutPutVar, ValueSelector, Var } from '@/app/components/workflow/types'
-import { useMemo } from 'react'
-import { useShallow } from 'zustand/react/shallow'
-import { useFeatures } from '@/app/components/base/features/hooks'
+import { useTranslation } from 'react-i18next'
+import { useSnippetDraftStore } from '@/app/components/snippets/draft-store'
 import {
   useIsChatMode,
   useWorkflow,
   useWorkflowVariables,
 } from '@/app/components/workflow/hooks'
+import { useHooksStore } from '@/app/components/workflow/hooks-store/store'
 import { useStore as useWorkflowStore } from '@/app/components/workflow/store'
-import { BlockEnum, VarType } from '@/app/components/workflow/types'
+import { BlockEnum } from '@/app/components/workflow/types'
+import { FlowType } from '@/types/common'
 import { inputVarTypeToVarType } from '../../data-source/utils'
+import { appendSnippetInputFieldVars, filterSnippetSystemVars, isSnippetCanvas } from './snippet-input-field-vars'
 import useNodeInfo from './use-node-info'
 
 type Params = {
@@ -31,28 +33,18 @@ const useAvailableVarList = (nodeId: string, {
   onlyLeafNodeVar: false,
   filterVar: () => true,
 }) => {
+  const { t } = useTranslation()
+  const snippetInputFields = useSnippetDraftStore(s => s.inputFields)
   const { getTreeLeafNodes, getNodeById, getBeforeNodesInSameBranchIncludeParent } = useWorkflow()
   const { getNodeAvailableVars } = useWorkflowVariables()
   const isChatMode = useIsChatMode()
-  const features = useFeatures(s => s.features)
-  const isSupportSandbox = !!features.sandbox?.enabled
-  const baseAvailableNodes = useMemo(() => {
-    return passedInAvailableNodes || (onlyLeafNodeVar ? getTreeLeafNodes(nodeId) : getBeforeNodesInSameBranchIncludeParent(nodeId))
-  }, [passedInAvailableNodes, onlyLeafNodeVar, nodeId, getTreeLeafNodes, getBeforeNodesInSameBranchIncludeParent])
-  const parentAvailableNodes = useWorkflowStore(useShallow(s => s.parentAvailableNodes)) || []
-  const availableNodes = useMemo(() => {
-    if (!parentAvailableNodes.length)
-      return baseAvailableNodes
-    const merged = new Map<string, Node>()
-    baseAvailableNodes.forEach((node) => {
-      merged.set(node.id, node)
-    })
-    parentAvailableNodes.forEach((node) => {
-      if (!merged.has(node.id))
-        merged.set(node.id, node)
-    })
-    return Array.from(merged.values())
-  }, [baseAvailableNodes, parentAvailableNodes])
+  const isSnippetFlow = useHooksStore(s => s.configsMap?.flowType) === FlowType.snippet || isSnippetCanvas()
+  const availableNodes = passedInAvailableNodes || (onlyLeafNodeVar ? getTreeLeafNodes(nodeId) : getBeforeNodesInSameBranchIncludeParent(nodeId))
+  const snippetInputFieldAvailability = appendSnippetInputFieldVars({
+    availableNodes,
+    fields: snippetInputFields,
+    title: t('panelTitle', { ns: 'snippet' }),
+  })
   const {
     parentNode: iterationNode,
   } = useNodeInfo(nodeId)
@@ -84,48 +76,26 @@ const useAvailableVarList = (nodeId: string, {
       })
     }
   }
-  const availableVars = [...getNodeAvailableVars({
-    parentNode: iterationNode,
-    beforeNodes: availableNodes,
-    isChatMode,
-    filterVar,
-    hideEnv,
-    hideChatVar,
-  }), ...dataSourceRagVars]
-  const availableNodesWithParent = useMemo(() => {
-    return [
-      ...availableNodes,
-      ...(isDataSourceNode ? [currNode] : []),
-    ]
-  }, [availableNodes, currNode, isDataSourceNode])
-  const llmNodeIds = new Set(
-    availableNodesWithParent
-      .filter(node => node?.data.type === BlockEnum.LLM)
-      .map(node => node!.id),
-  )
-  const filteredAvailableVars = llmNodeIds.size
-    ? availableVars
-        .map((nodeVar) => {
-          if (!llmNodeIds.has(nodeVar.nodeId))
-            return nodeVar
-          const nextVars = nodeVar.vars.filter(item => item.variable !== 'context').filter((item) => {
-            if (isSupportSandbox && item.type === VarType.string)
-              return item.variable !== 'text' && item.variable !== 'reasoning_content'
-
-            return true
-          })
-          return {
-            ...nodeVar,
-            vars: nextVars,
-          }
-        })
-        .filter(nodeVar => nodeVar.vars.length > 0)
-    : availableVars
+  const availableVars = filterSnippetSystemVars([
+    ...snippetInputFieldAvailability.availableVars,
+    ...getNodeAvailableVars({
+      parentNode: iterationNode,
+      beforeNodes: availableNodes,
+      isChatMode,
+      filterVar,
+      hideEnv,
+      hideChatVar,
+    }),
+    ...dataSourceRagVars,
+  ], isSnippetFlow)
 
   return {
-    availableVars: filteredAvailableVars,
-    availableNodes,
-    availableNodesWithParent,
+    availableVars,
+    availableNodes: snippetInputFieldAvailability.availableNodes,
+    availableNodesWithParent: [
+      ...snippetInputFieldAvailability.availableNodes,
+      ...(isDataSourceNode ? [currNode] : []),
+    ],
   }
 }
 

@@ -1,8 +1,10 @@
+import type { AvatarSize } from '@langgenius/dify-ui/avatar'
 import type { FC } from 'react'
+import { AvatarFallback, AvatarImage, AvatarRoot } from '@langgenius/dify-ui/avatar'
+import { useAtomValue } from 'jotai'
 import { memo } from 'react'
-import Avatar from '@/app/components/base/avatar'
 import { getUserColor } from '@/app/components/workflow/collaboration/utils/user-color'
-import { useAppContext } from '@/context/app-context'
+import { userProfileIdAtom } from '@/context/account-state'
 
 type User = {
   id: string
@@ -13,19 +15,30 @@ type User = {
 type UserAvatarListProps = {
   users: User[]
   maxVisible?: number
-  size?: number
+  size?: AvatarSize
   className?: string
   showCount?: boolean
+}
+
+const avatarSizeToPx: Record<AvatarSize, number> = {
+  'xxs': 16,
+  'xs': 20,
+  'sm': 24,
+  'md': 32,
+  'lg': 36,
+  'xl': 40,
+  '2xl': 48,
+  '3xl': 64,
 }
 
 export const UserAvatarList: FC<UserAvatarListProps> = memo(({
   users,
   maxVisible = 3,
-  size = 24,
+  size = 'sm',
   className = '',
   showCount = true,
 }) => {
-  const { userProfile } = useAppContext()
+  const currentUserId = useAtomValue(userProfileIdAtom)
   if (!users.length)
     return null
 
@@ -33,8 +46,6 @@ export const UserAvatarList: FC<UserAvatarListProps> = memo(({
   const actualMaxVisible = shouldShowCount ? Math.max(1, maxVisible - 1) : maxVisible
   const visibleUsers = users.slice(0, actualMaxVisible)
   const remainingCount = users.length - actualMaxVisible
-
-  const currentUserId = userProfile?.id
 
   return (
     <div className={`flex items-center -space-x-1 ${className}`}>
@@ -47,29 +58,37 @@ export const UserAvatarList: FC<UserAvatarListProps> = memo(({
             className="relative"
             style={{ zIndex: visibleUsers.length - index }}
           >
-            <Avatar
-              name={user.name}
-              avatar={user.avatar_url || null}
-              size={size}
-              className="ring-2 ring-components-panel-bg"
-              backgroundColor={userColor}
-            />
+            <AvatarRoot size={size} className="ring-2 ring-components-panel-bg">
+              {user.avatar_url && (
+                <AvatarImage
+                  src={user.avatar_url}
+                  alt={user.name}
+                />
+              )}
+              <AvatarFallback
+                size={size}
+                style={userColor ? { backgroundColor: userColor } : undefined}
+              >
+                {user.name?.[0]?.toLocaleUpperCase()}
+              </AvatarFallback>
+            </AvatarRoot>
           </div>
         )
       },
 
       )}
       {shouldShowCount && remainingCount > 0 && (
-        <div
-          className="flex items-center justify-center rounded-full bg-gray-500 text-[10px] leading-none text-white ring-2 ring-components-panel-bg"
-          style={{
-            zIndex: 0,
-            width: size,
-            height: size,
-          }}
-        >
-          +
-          {remainingCount}
+        <div className="relative shrink-0" style={{ zIndex: 0 }}>
+          <div
+            className="inline-flex items-center justify-center rounded-full bg-gray-500 text-[10px] leading-none text-white ring-2 ring-components-panel-bg"
+            style={{
+              width: avatarSizeToPx[size],
+              height: avatarSizeToPx[size],
+            }}
+          >
+            +
+            {remainingCount}
+          </div>
         </div>
       )}
     </div>

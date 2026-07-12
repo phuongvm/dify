@@ -2,30 +2,35 @@
 
 import type { CreateAppModalProps } from '@/app/components/explore/create-app-modal'
 import type { App } from '@/models/explore'
+import { cn } from '@langgenius/dify-ui/cn'
+import { toast } from '@langgenius/dify-ui/toast'
 import { RiRobot2Line } from '@remixicon/react'
+import { useSuspenseQuery } from '@tanstack/react-query'
 import { useDebounceFn } from 'ahooks'
+import { useAtomValue } from 'jotai'
 import * as React from 'react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import AppTypeSelector from '@/app/components/app/type-selector'
-import { trackEvent } from '@/app/components/base/amplitude'
-import { buttonVariants } from '@/app/components/base/button'
+import { useSetNeedRefreshAppList } from '@/app/components/apps/storage'
 import Divider from '@/app/components/base/divider'
 import Input from '@/app/components/base/input'
 import Loading from '@/app/components/base/loading'
-import { toast } from '@/app/components/base/ui/toast'
 import CreateAppModal from '@/app/components/explore/create-app-modal'
 import { usePluginDependencies } from '@/app/components/workflow/plugin-dependency/hooks'
-import { MARKETPLACE_URL_PREFIX, NEED_REFRESH_APP_LIST_KEY } from '@/config'
-import { useAppContext } from '@/context/app-context'
+import { userProfileIdAtom } from '@/context/account-state'
+import { workspacePermissionKeysAtom } from '@/context/permission-state'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
 import { DSLImportMode } from '@/models/app'
 import { useRouter } from '@/next/navigation'
 import { importDSL } from '@/service/apps'
 import { fetchAppDetail } from '@/service/explore'
+import { useInvalidateAppList } from '@/service/use-apps'
 import { useExploreAppList } from '@/service/use-explore'
 import { AppModeEnum } from '@/types/app'
 import { getRedirection } from '@/utils/app-redirection'
-import { cn } from '@/utils/classnames'
+import { trackCreateApp } from '@/utils/create-app-tracking'
+import { hasPermission } from '@/utils/permission'
 import AppCard from '../app-card'
 import Sidebar, { AppCategories, AppCategoryLabel } from './sidebar'
 
@@ -33,8 +38,6 @@ type AppsProps = {
   onSuccess?: () => void
   onCreateFromBlank?: () => void
 }
-
-const marketplaceTemplatesUrl = `${MARKETPLACE_URL_PREFIX.replace(/\/$/, '')}/templates`
 
 // export enum PageType {
 //   EXPLORE = 'explore',
@@ -46,9 +49,16 @@ const Apps = ({
   onCreateFromBlank,
 }: AppsProps) => {
   const { t } = useTranslation()
-  const { isCurrentWorkspaceEditor } = useAppContext()
+  const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
+  const currentUserId = useAtomValue(userProfileIdAtom)
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
+  const isRbacEnabled = systemFeatures.rbac_enabled
+  const canCreateAppFromTemplate = hasPermission(workspacePermissionKeys, 'app.create_and_management')
   const { push } = useRouter()
+  const invalidateAppList = useInvalidateAppList()
   const allCategoriesEn = AppCategories.RECOMMENDED
+
+  const setNeedRefresh = useSetNeedRefreshAppList()
 
   const [keywords, setKeywords] = useState('')
   const [searchKeywords, setSearchKeywords] = useState('')
@@ -70,14 +80,30 @@ const Apps = ({
     isLoading,
   } = useExploreAppList()
 
+  const visibleCategories = useMemo(() => {
+    if (!data)
+      return []
+
+    const categoriesWithApps = new Set<string>()
+    data.allList.forEach((app) => {
+      app.categories.forEach(category => categoriesWithApps.add(category))
+    })
+
+    return data.categories.filter(category => categoriesWithApps.has(category))
+  }, [data])
+
+  const activeCategory = visibleCategories.includes(currCategory)
+    ? currCategory
+    : allCategoriesEn
+
   const filteredList = useMemo(() => {
     if (!data)
       return []
     const { allList } = data
     const filteredByCategory = allList.filter((item) => {
-      if (currCategory === allCategoriesEn)
+      if (activeCategory === allCategoriesEn)
         return true
-      return item.category === currCategory
+      return item.categories?.includes(activeCategory) ?? false
     })
     if (currentType.length === 0)
       return filteredByCategory
@@ -94,7 +120,7 @@ const Apps = ({
         return true
       return false
     })
-  }, [currentType, currCategory, allCategoriesEn, data])
+  }, [currentType, activeCategory, allCategoriesEn, data])
 
   const searchFilteredList = useMemo(() => {
     if (!searchKeywords || !filteredList || filteredList.length === 0)
@@ -130,14 +156,7 @@ const Apps = ({
         icon_background,
         description,
       })
-
-      // Track app creation from template
-      trackEvent('create_app_with_template', {
-        app_mode: mode,
-        template_id: currApp?.app.id,
-        template_name: currApp?.app.name,
-        description,
-      })
+      trackCreateApp({ source: 'studio_template_list', appMode: mode, templateId: currApp?.app_id })
 
       setIsShowCreateModal(false)
       toast.success(t('newApp.appCreated', { ns: 'app' }))
@@ -145,8 +164,16 @@ const Apps = ({
         onSuccess()
       if (app.app_id)
         await handleCheckPluginDependencies(app.app_id)
-      localStorage.setItem(NEED_REFRESH_APP_LIST_KEY, '1')
-      getRedirection(isCurrentWorkspaceEditor, { id: app.app_id!, mode }, push)
+      setNeedRefresh('1')
+      invalidateAppList()
+      if (app.app_id) {
+        getRedirection({ id: app.app_id, mode: app.app_mode, permission_keys: app.permission_keys }, push, {
+          currentUserId,
+          resourceMaintainer: currentUserId,
+          workspacePermissionKeys,
+          isRbacEnabled,
+        })
+      }
     }
     catch {
       toast.error(t('newApp.appCreateFailed', { ns: 'app' }))
@@ -165,18 +192,7 @@ const Apps = ({
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-divider-burn py-3">
         <div className="min-w-[180px] pl-5">
-          <span className="text-text-primary title-xl-semi-bold">{t('newApp.startFromTemplate', { ns: 'app' })}</span>
-          <a
-            href={marketplaceTemplatesUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              buttonVariants({ variant: 'primary', size: 'small' }),
-              'ml-2 align-middle',
-            )}
-          >
-            {t('newApp.exploreCommunity', { ns: 'app' })}
-          </a>
+          <span className="title-xl-semi-bold text-text-primary">{t('newApp.startFromTemplate', { ns: 'app' })}</span>
         </div>
         <div className="flex max-w-[548px] flex-1 items-center rounded-xl border border-components-panel-border bg-components-panel-bg-blur p-1.5 shadow-md">
           <AppTypeSelector value={currentType} onChange={setCurrentType} />
@@ -198,31 +214,31 @@ const Apps = ({
       <div className="relative flex flex-1 overflow-y-auto">
         {!searchKeywords && (
           <div className="h-full w-[200px] p-4">
-            <Sidebar current={currCategory as AppCategories} categories={data?.categories || []} onClick={(category) => { setCurrCategory(category) }} onCreateFromBlank={onCreateFromBlank} />
+            <Sidebar current={activeCategory as AppCategories} categories={visibleCategories} onClick={(category) => { setCurrCategory(category) }} onCreateFromBlank={onCreateFromBlank} />
           </div>
         )}
         <div className="h-full flex-1 shrink-0 grow overflow-auto border-l border-divider-burn p-6 pt-2">
           {searchFilteredList && searchFilteredList.length > 0 && (
             <>
-              <div className="pb-1 pt-4">
+              <div className="pt-4 pb-1">
                 {searchKeywords
-                  ? <p className="text-text-tertiary title-md-semi-bold">{searchFilteredList.length > 1 ? t('newApp.foundResults', { ns: 'app', count: searchFilteredList.length }) : t('newApp.foundResult', { ns: 'app', count: searchFilteredList.length })}</p>
+                  ? <p className="title-md-semi-bold text-text-tertiary">{searchFilteredList.length > 1 ? t('newApp.foundResults', { ns: 'app', count: searchFilteredList.length }) : t('newApp.foundResult', { ns: 'app', count: searchFilteredList.length })}</p>
                   : (
                       <div className="flex h-[22px] items-center">
-                        <AppCategoryLabel category={currCategory as AppCategories} className="text-text-primary title-md-semi-bold" />
+                        <AppCategoryLabel category={activeCategory as AppCategories} className="title-md-semi-bold text-text-primary" />
                       </div>
                     )}
               </div>
               <div
                 className={cn(
-                  'grid shrink-0 grid-cols-1 content-start gap-3 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5 2k:grid-cols-6',
+                  'grid shrink-0 grid-cols-[repeat(auto-fill,minmax(296px,1fr))] content-start gap-3',
                 )}
               >
                 {searchFilteredList.map(app => (
                   <AppCard
                     key={app.app_id}
                     app={app}
-                    canCreate={isCurrentWorkspaceEditor}
+                    canCreate={canCreateAppFromTemplate}
                     onCreate={() => {
                       setCurrApp(app)
                       setIsShowCreateModal(true)
@@ -258,11 +274,11 @@ function NoTemplateFound() {
   const { t } = useTranslation()
   return (
     <div className="w-full rounded-lg bg-workflow-process-bg p-4">
-      <div className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-components-card-bg shadow-lg">
-        <RiRobot2Line className="h-5 w-5 text-text-tertiary" />
+      <div className="mb-2 inline-flex size-8 items-center justify-center rounded-lg bg-components-card-bg shadow-lg">
+        <RiRobot2Line className="size-5 text-text-tertiary" />
       </div>
-      <p className="text-text-primary title-md-semi-bold">{t('newApp.noTemplateFound', { ns: 'app' })}</p>
-      <p className="text-text-tertiary system-sm-regular">{t('newApp.noTemplateFoundTip', { ns: 'app' })}</p>
+      <p className="title-md-semi-bold text-text-primary">{t('newApp.noTemplateFound', { ns: 'app' })}</p>
+      <p className="system-sm-regular text-text-tertiary">{t('newApp.noTemplateFoundTip', { ns: 'app' })}</p>
     </div>
   )
 }

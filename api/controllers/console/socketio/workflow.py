@@ -4,6 +4,7 @@ from typing import cast
 
 from flask import Request as FlaskRequest
 
+from extensions.ext_database import db
 from extensions.ext_socketio import sio
 from libs.passport import PassportService
 from libs.token import extract_access_token
@@ -43,7 +44,7 @@ def socket_connect(sid, environ, auth):
             return False
 
         with sio.app.app_context():
-            user = AccountService.load_logged_in_account(account_id=user_id)
+            user = AccountService.load_logged_in_account(account_id=user_id, session=db.session())
             if not user:
                 logging.warning("Socket connect rejected: user not found (user_id=%s, sid=%s)", user_id, sid)
                 return False
@@ -51,7 +52,7 @@ def socket_connect(sid, environ, auth):
                 logging.warning("Socket connect rejected: no edit permission (user_id=%s, sid=%s)", user_id, sid)
                 return False
 
-            collaboration_service.save_session(sid, user)
+            collaboration_service.save_socket_identity(sid, user)
             return True
 
     except Exception:
@@ -68,7 +69,8 @@ def handle_user_connect(sid, data):
     if not workflow_id:
         return {"msg": "workflow_id is required"}, 400
 
-    result = collaboration_service.register_session(workflow_id, sid)
+    with sio.app.app_context():
+        result = collaboration_service.authorize_and_join_workflow_room(workflow_id, sid, session=db.session())
     if not result:
         return {"msg": "unauthorized"}, 401
 
@@ -96,9 +98,6 @@ def handle_collaboration_event(sid, data):
     6. workflow_update
     7. comments_update
     8. node_panel_presence
-    9. skill_file_active
-    10. skill_sync_request
-    11. skill_resync_request
     """
     return collaboration_service.relay_collaboration_event(sid, data)
 
@@ -109,11 +108,3 @@ def handle_graph_event(sid, data):
     Handle graph events - simple broadcast relay.
     """
     return collaboration_service.relay_graph_event(sid, data)
-
-
-@_sio_on("skill_event")
-def handle_skill_event(sid, data):
-    """
-    Handle skill events - simple broadcast relay.
-    """
-    return collaboration_service.relay_skill_event(sid, data)

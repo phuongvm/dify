@@ -1,5 +1,4 @@
-import type { GetVarType, WorkflowVariableBlockType } from '../../types'
-import type { Node } from '@/app/components/workflow/types'
+import type { WorkflowVariableBlockType } from '../../types'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
 import { mergeRegister } from '@lexical/utils'
 import {
@@ -18,24 +17,14 @@ import {
 
 export const INSERT_WORKFLOW_VARIABLE_BLOCK_COMMAND = createCommand('INSERT_WORKFLOW_VARIABLE_BLOCK_COMMAND')
 export const DELETE_WORKFLOW_VARIABLE_BLOCK_COMMAND = createCommand('DELETE_WORKFLOW_VARIABLE_BLOCK_COMMAND')
-export const CLEAR_HIDE_MENU_TIMEOUT = createCommand('CLEAR_HIDE_MENU_TIMEOUT')
-
 export type UpdateWorkflowNodesMapPayload = {
   workflowNodesMap: NonNullable<WorkflowVariableBlockType['workflowNodesMap']>
-  nodeOutputVars: NonNullable<WorkflowVariableBlockType['variables']>
+  availableVariables: NonNullable<WorkflowVariableBlockType['variables']>
 }
-
 export const UPDATE_WORKFLOW_NODES_MAP = createCommand<UpdateWorkflowNodesMapPayload>('UPDATE_WORKFLOW_NODES_MAP')
-
-export type WorkflowVariableBlockProps = {
-  getWorkflowNode: (nodeId: string) => Node
-  onInsert?: () => void
-  onDelete?: () => void
-  getVarType: GetVarType
-}
 const WorkflowVariableBlock = memo(({
-  workflowNodesMap,
-  variables,
+  workflowNodesMap = {},
+  variables: workflowAvailableVariables,
   onInsert,
   onDelete,
   getVarType,
@@ -46,10 +35,10 @@ const WorkflowVariableBlock = memo(({
     editor.update(() => {
       editor.dispatchCommand(UPDATE_WORKFLOW_NODES_MAP, {
         workflowNodesMap: workflowNodesMap || {},
-        nodeOutputVars: variables || [],
+        availableVariables: workflowAvailableVariables || [],
       })
     })
-  }, [editor, workflowNodesMap, variables])
+  }, [editor, workflowNodesMap, workflowAvailableVariables])
 
   useEffect(() => {
     if (!editor.hasNodes([WorkflowVariableBlockNode]))
@@ -58,9 +47,13 @@ const WorkflowVariableBlock = memo(({
     return mergeRegister(
       editor.registerCommand(
         INSERT_WORKFLOW_VARIABLE_BLOCK_COMMAND,
-        (insertedVariables: string[]) => {
-          editor.dispatchCommand(CLEAR_HIDE_MENU_TIMEOUT, undefined)
-          const workflowVariableBlockNode = $createWorkflowVariableBlockNode(insertedVariables, workflowNodesMap, getVarType, undefined, undefined, undefined, variables)
+        (variables: string[]) => {
+          const workflowVariableBlockNode = $createWorkflowVariableBlockNode(
+            variables,
+            workflowNodesMap,
+            getVarType,
+            workflowAvailableVariables || [],
+          )
 
           $insertNodes([workflowVariableBlockNode])
           if (onInsert)
@@ -81,7 +74,7 @@ const WorkflowVariableBlock = memo(({
         COMMAND_PRIORITY_EDITOR,
       ),
     )
-  }, [editor, onInsert, onDelete, workflowNodesMap, getVarType, variables])
+  }, [editor, onInsert, onDelete, workflowNodesMap, getVarType, workflowAvailableVariables])
 
   return null
 })

@@ -1,4 +1,5 @@
 import types
+from inspect import unwrap
 from unittest.mock import patch
 
 import pytest
@@ -7,21 +8,15 @@ from werkzeug.exceptions import Forbidden, NotFound
 import controllers.files.tool_files as module
 
 
-def unwrap(func):
-    while hasattr(func, "__wrapped__"):
-        func = func.__wrapped__
-    return func
-
-
 def fake_request(args: dict):
     return types.SimpleNamespace(args=types.SimpleNamespace(to_dict=lambda flat=True: args))
 
 
 class DummyToolFile:
-    def __init__(self, mimetype="text/plain", size=10, name="tool.txt"):
-        self.mimetype = mimetype
+    def __init__(self, mime_type="text/plain", size=10, filename="tool.txt"):
+        self.mime_type = mime_type
         self.size = size
-        self.name = name
+        self.filename = filename
 
 
 @pytest.fixture(autouse=True)
@@ -87,8 +82,8 @@ class TestToolFileApi:
 
         stream = iter([b"data"])
         tool_file = DummyToolFile(
-            mimetype="application/pdf",
-            name="doc.pdf",
+            mime_type="application/pdf",
+            filename="doc.pdf",
         )
 
         mock_tool_file_manager.return_value.get_file_generator_by_tool_file_id.return_value = (

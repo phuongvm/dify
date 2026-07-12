@@ -1,29 +1,34 @@
 import type { PluginDetail } from '@/app/components/plugins/types'
 import { create } from 'zustand'
 
-export enum ReadmeShowType {
-  drawer = 'drawer',
-  modal = 'modal',
+export type ReadmePanelPresentation = 'drawer' | 'dialog'
+
+type ReadmePanelState = {
+  detail: PluginDetail
+  presentation: ReadmePanelPresentation
+  triggerId?: string
+}
+
+type OpenReadmePanelPayload = {
+  detail: PluginDetail
+  presentation?: ReadmePanelPresentation
+  triggerId?: string
 }
 
 type Shape = {
-  currentPluginDetail?: {
-    detail: PluginDetail
-    showType: ReadmeShowType
-    position?: 'left' | 'right'
-  }
-  setCurrentPluginDetail: (detail?: PluginDetail, showType?: ReadmeShowType, position?: 'left' | 'right') => void
+  currentPanel?: ReadmePanelState
+  openReadmePanel: (payload: OpenReadmePanelPayload) => void
+  closeReadmePanel: () => void
 }
 
 export const useReadmePanelStore = create<Shape>(set => ({
-  currentPluginDetail: undefined,
-  setCurrentPluginDetail: (detail?: PluginDetail, showType?: ReadmeShowType, position?: 'left' | 'right') => set({
-    currentPluginDetail: !detail
-      ? undefined
-      : {
-          detail,
-          showType: showType ?? ReadmeShowType.drawer,
-          position,
-        },
+  currentPanel: undefined,
+  openReadmePanel: ({ detail, presentation = 'drawer', triggerId }) => set({
+    currentPanel: {
+      detail,
+      presentation,
+      triggerId,
+    },
   }),
+  closeReadmePanel: () => set({ currentPanel: undefined }),
 }))

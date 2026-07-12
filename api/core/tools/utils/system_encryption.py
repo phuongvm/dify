@@ -48,7 +48,7 @@ class SystemEncrypter:
         Encrypt parameters.
 
         Args:
-            params: parameters dictionary, e.g., {"client_id": "xxx", "client_secret": "xxx"}
+            params: Parameters dictionary, e.g., {"client_id": "xxx", "client_secret": "xxx"}
 
         Returns:
             Base64-encoded encrypted string
@@ -166,7 +166,7 @@ def encrypt_system_params(params: Mapping[str, Any]) -> str:
     Encrypt parameters using the global encrypter.
 
     Args:
-        params: parameters dictionary
+        params: Parameters dictionary
 
     Returns:
         Base64-encoded encrypted string

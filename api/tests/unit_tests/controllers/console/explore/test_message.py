@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask import Flask
 from werkzeug.exceptions import InternalServerError, NotFound
 
 import controllers.console.explore.message as module
@@ -21,7 +22,7 @@ from core.errors.error import (
     ProviderTokenNotInitError,
     QuotaExceededError,
 )
-from dify_graph.model_runtime.errors.invoke import InvokeError
+from graphon.model_runtime.errors.invoke import InvokeError
 from services.errors.conversation import ConversationNotExistsError
 from services.errors.message import (
     FirstMessageNotExistsError,
@@ -48,13 +49,15 @@ def make_message():
     msg.query = "hello"
     msg.re_sign_file_url_answer = ""
     msg.user_feedback = MagicMock(rating=None)
+    msg.total_price = None
+    msg.currency = None
     msg.status = "normal"
     msg.error = None
     return msg
 
 
 class TestMessageListApi:
-    def test_get_success(self, app):
+    def test_get_success(self, app: Flask):
         api = module.MessageListApi()
         method = unwrap(api.get)
 
@@ -72,14 +75,13 @@ class TestMessageListApi:
                 "/",
                 query_string={"conversation_id": "11111111-1111-1111-1111-111111111111"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "pagination_by_first_id",
                 return_value=pagination,
             ),
         ):
-            result = method(installed_app)
+            result = method(MagicMock(), installed_app)
 
         assert result["limit"] == 20
         assert result["has_more"] is False
@@ -92,11 +94,10 @@ class TestMessageListApi:
         installed_app = MagicMock()
         installed_app.app = MagicMock(mode="completion")
 
-        with patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)):
-            with pytest.raises(NotChatAppError):
-                method(installed_app)
+        with pytest.raises(NotChatAppError):
+            method(MagicMock(), installed_app)
 
-    def test_conversation_not_exists(self, app):
+    def test_conversation_not_exists(self, app: Flask):
         api = module.MessageListApi()
         method = unwrap(api.get)
 
@@ -108,7 +109,6 @@ class TestMessageListApi:
                 "/",
                 query_string={"conversation_id": "11111111-1111-1111-1111-111111111111"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "pagination_by_first_id",
@@ -116,9 +116,9 @@ class TestMessageListApi:
             ),
         ):
             with pytest.raises(NotFound):
-                method(installed_app)
+                method(MagicMock(), installed_app)
 
-    def test_first_message_not_exists(self, app):
+    def test_first_message_not_exists(self, app: Flask):
         api = module.MessageListApi()
         method = unwrap(api.get)
 
@@ -130,7 +130,6 @@ class TestMessageListApi:
                 "/",
                 query_string={"conversation_id": "11111111-1111-1111-1111-111111111111"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "pagination_by_first_id",
@@ -138,11 +137,11 @@ class TestMessageListApi:
             ),
         ):
             with pytest.raises(NotFound):
-                method(installed_app)
+                method(MagicMock(), installed_app)
 
 
 class TestMessageFeedbackApi:
-    def test_post_success(self, app):
+    def test_post_success(self, app: Flask):
         api = module.MessageFeedbackApi()
         method = unwrap(api.post)
 
@@ -151,17 +150,16 @@ class TestMessageFeedbackApi:
 
         with (
             app.test_request_context("/", json={"rating": "like"}),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "create_feedback",
             ),
         ):
-            result = method(installed_app, "mid")
+            result = method(MagicMock(), installed_app, "mid")
 
         assert result["result"] == "success"
 
-    def test_message_not_exists(self, app):
+    def test_message_not_exists(self, app: Flask):
         api = module.MessageFeedbackApi()
         method = unwrap(api.post)
 
@@ -170,7 +168,6 @@ class TestMessageFeedbackApi:
 
         with (
             app.test_request_context("/", json={}),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "create_feedback",
@@ -178,11 +175,11 @@ class TestMessageFeedbackApi:
             ),
         ):
             with pytest.raises(NotFound):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
 
 class TestMessageMoreLikeThisApi:
-    def test_get_success(self, app):
+    def test_get_success(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -194,7 +191,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -206,7 +202,7 @@ class TestMessageMoreLikeThisApi:
                 return_value=("ok", 200),
             ),
         ):
-            resp = method(installed_app, "mid")
+            resp = method(MagicMock(), MagicMock(), installed_app, "mid")
 
         assert resp == ("ok", 200)
 
@@ -217,11 +213,10 @@ class TestMessageMoreLikeThisApi:
         installed_app = MagicMock()
         installed_app.app = MagicMock(mode="chat")
 
-        with patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)):
-            with pytest.raises(NotCompletionAppError):
-                method(installed_app, "mid")
+        with pytest.raises(NotCompletionAppError):
+            method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_more_like_this_disabled(self, app):
+    def test_more_like_this_disabled(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -233,7 +228,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -241,9 +235,9 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(AppMoreLikeThisDisabledError):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_message_not_exists_more_like_this(self, app):
+    def test_message_not_exists_more_like_this(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -255,7 +249,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -263,9 +256,9 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(NotFound):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_provider_not_init_more_like_this(self, app):
+    def test_provider_not_init_more_like_this(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -277,7 +270,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -285,9 +277,9 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(ProviderNotInitializeError):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_quota_exceeded_more_like_this(self, app):
+    def test_quota_exceeded_more_like_this(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -299,7 +291,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -307,9 +298,9 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(ProviderQuotaExceededError):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_model_not_support_more_like_this(self, app):
+    def test_model_not_support_more_like_this(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -321,7 +312,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -329,9 +319,9 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(ProviderModelCurrentlyNotSupportError):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_invoke_error_more_like_this(self, app):
+    def test_invoke_error_more_like_this(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -343,7 +333,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -351,9 +340,9 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(CompletionRequestError):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
-    def test_unexpected_error_more_like_this(self, app):
+    def test_unexpected_error_more_like_this(self, app: Flask):
         api = module.MessageMoreLikeThisApi()
         method = unwrap(api.get)
 
@@ -365,7 +354,6 @@ class TestMessageMoreLikeThisApi:
                 "/",
                 query_string={"response_mode": "blocking"},
             ),
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.AppGenerateService,
                 "generate_more_like_this",
@@ -373,7 +361,7 @@ class TestMessageMoreLikeThisApi:
             ),
         ):
             with pytest.raises(InternalServerError):
-                method(installed_app, "mid")
+                method(MagicMock(), MagicMock(), installed_app, "mid")
 
 
 class TestMessageSuggestedQuestionApi:
@@ -385,14 +373,13 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
                 return_value=["q1", "q2"],
             ),
         ):
-            result = method(installed_app, "mid")
+            result = method(MagicMock(), installed_app, "mid")
 
         assert result["data"] == ["q1", "q2"]
 
@@ -403,9 +390,8 @@ class TestMessageSuggestedQuestionApi:
         installed_app = MagicMock()
         installed_app.app = MagicMock(mode="completion")
 
-        with patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)):
-            with pytest.raises(NotChatAppError):
-                method(installed_app, "mid")
+        with pytest.raises(NotChatAppError):
+            method(MagicMock(), installed_app, "mid")
 
     def test_disabled(self):
         api = module.MessageSuggestedQuestionApi()
@@ -415,7 +401,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -423,7 +408,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(AppSuggestedQuestionsAfterAnswerDisabledError):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_message_not_exists_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -433,7 +418,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -441,7 +425,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(NotFound):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_conversation_not_exists_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -451,7 +435,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -459,7 +442,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(NotFound):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_provider_not_init_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -469,7 +452,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -477,7 +459,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(ProviderNotInitializeError):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_quota_exceeded_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -487,7 +469,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -495,7 +476,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(ProviderQuotaExceededError):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_model_not_support_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -505,7 +486,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -513,7 +493,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(ProviderModelCurrentlyNotSupportError):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_invoke_error_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -523,7 +503,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -531,7 +510,7 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(CompletionRequestError):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")
 
     def test_unexpected_error_suggested_question(self):
         api = module.MessageSuggestedQuestionApi()
@@ -541,7 +520,6 @@ class TestMessageSuggestedQuestionApi:
         installed_app.app = MagicMock(mode="chat")
 
         with (
-            patch.object(module, "current_account_with_tenant", return_value=(MagicMock(), None)),
             patch.object(
                 module.MessageService,
                 "get_suggested_questions_after_answer",
@@ -549,4 +527,4 @@ class TestMessageSuggestedQuestionApi:
             ),
         ):
             with pytest.raises(InternalServerError):
-                method(installed_app, "mid")
+                method(MagicMock(), installed_app, "mid")

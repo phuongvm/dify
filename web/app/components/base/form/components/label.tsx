@@ -1,6 +1,6 @@
+import { cn } from '@langgenius/dify-ui/cn'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/utils/classnames'
-import Tooltip from '../../tooltip'
+import { Infotip } from '../../infotip'
 
 export type LabelProps = {
   htmlFor: string
@@ -26,20 +26,16 @@ const Label = ({
       <label
         data-testid="label"
         htmlFor={htmlFor}
-        className={cn('text-text-secondary system-sm-medium', className)}
+        className={cn('system-sm-medium text-text-secondary', className)}
       >
         {label}
       </label>
-      {!isRequired && showOptional && <div className="ml-1 text-text-tertiary system-xs-regular">{t('label.optional', { ns: 'common' })}</div>}
-      {isRequired && <div className="ml-1 text-text-destructive-secondary system-xs-regular">*</div>}
+      {!isRequired && showOptional && <div className="ml-1 system-xs-regular text-text-tertiary">{t('label.optional', { ns: 'common' })}</div>}
+      {isRequired && <div className="ml-1 system-xs-regular text-text-destructive-secondary">*</div>}
       {tooltip && (
-        <Tooltip
-          popupContent={
-            <div className="w-[200px]">{tooltip}</div>
-          }
-          triggerClassName="ml-0.5 w-4 h-4"
-          triggerTestId={`${htmlFor}-tooltip`}
-        />
+        <Infotip aria-label={tooltip} className="ml-0.5 size-4" popupClassName="w-[200px]">
+          {tooltip}
+        </Infotip>
       )}
     </div>
   )

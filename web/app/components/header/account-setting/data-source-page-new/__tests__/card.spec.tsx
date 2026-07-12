@@ -11,6 +11,44 @@ import { useInvalidDataSourceList } from '@/service/use-pipeline'
 import Card from '../card'
 import { useDataSourceAuthUpdate } from '../hooks'
 
+let mockWorkspacePermissionKeys: string[] = ['credential.use', 'credential.create', 'credential.manage']
+
+vi.mock('@/context/account-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockWorkspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/workspace-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockWorkspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/permission-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockWorkspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/version-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockWorkspacePermissionKeys,
+  }))
+})
+vi.mock('@/context/system-features-state', async (importOriginal) => {
+  const { createAppContextStateAtomMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateAtomMock(importOriginal, () => ({
+    workspacePermissionKeys: mockWorkspacePermissionKeys,
+  }))
+})
+
+vi.mock('jotai', async (importOriginal) => {
+  const { createAppContextStateJotaiMock } = await import('@/__tests__/utils/mock-app-context-state')
+  return createAppContextStateJotaiMock(importOriginal)
+})
+
 vi.mock('@/app/components/plugins/plugin-auth', () => ({
   ApiKeyModal: vi.fn(({ onClose, onUpdate, onRemove, disabled, editValues }: { onClose: () => void, onUpdate: () => void, onRemove: () => void, disabled: boolean, editValues: Record<string, unknown> }) => (
     <div data-testid="mock-api-key-modal" data-disabled={disabled}>
@@ -24,8 +62,8 @@ vi.mock('@/app/components/plugins/plugin-auth', () => ({
   AuthCategory: {
     datasource: 'datasource',
   },
-  AddApiKeyButton: ({ onUpdate }: { onUpdate: () => void }) => <button onClick={onUpdate}>Add API Key</button>,
-  AddOAuthButton: ({ onUpdate }: { onUpdate: () => void }) => <button onClick={onUpdate}>Add OAuth</button>,
+  AddApiKeyButton: ({ onUpdate, disabled }: { onUpdate: () => void, disabled?: boolean }) => <button disabled={disabled} onClick={onUpdate}>Add API Key</button>,
+  AddOAuthButton: ({ onUpdate, disabled }: { onUpdate: () => void, disabled?: boolean }) => <button disabled={disabled} onClick={onUpdate}>Add OAuth</button>,
 }))
 
 vi.mock('@/hooks/use-i18n', () => ({
@@ -91,7 +129,7 @@ describe('Card Component', () => {
     author: 'Test Author',
     provider: 'test-provider',
     plugin_id: 'test-plugin-id',
-    plugin_unique_identifier: 'test-unique-id',
+    plugin_unique_identifier: 'test-author/test-name:1.2.0@checksum',
     icon: 'test-icon-url',
     name: 'test-name',
     label: {
@@ -110,7 +148,7 @@ describe('Card Component', () => {
         type: CredentialTypeEnum.API_KEY,
         is_default: true,
         avatar_url: 'avatar1',
-      },
+      }!,
     ],
   }
 
@@ -118,6 +156,7 @@ describe('Card Component', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockWorkspacePermissionKeys = ['credential.use', 'credential.create', 'credential.manage']
     mockPluginAuthActionReturn = createMockPluginAuthActionReturn()
 
     vi.mocked(useDataSourceAuthUpdate).mockReturnValue({ handleAuthUpdate: mockHandleAuthUpdate })
@@ -144,11 +183,14 @@ describe('Card Component', () => {
       render(<Card item={mockItem} />)
 
       // Assert
-      expect(screen.getByText('Test Label')).toBeInTheDocument()
-      expect(screen.getByText(/Test Author/)).toBeInTheDocument()
-      expect(screen.getByText(/test-name/)).toBeInTheDocument()
-      expect(screen.getByRole('img')).toHaveAttribute('src', 'test-icon-url')
-      expect(screen.getByText('Credential 1')).toBeInTheDocument()
+      // Assert
+      expect(screen.getByText('Test Label'))!.toBeInTheDocument()
+      expect(screen.queryByText(/Test Author/))!.not.toBeInTheDocument()
+      expect(screen.queryByText(/test-name/))!.not.toBeInTheDocument()
+      expect(screen.getByText('1.2.0'))!.toBeInTheDocument()
+      expect(screen.getByRole('img', { name: 'Test Label' }))!.toHaveAttribute('src', 'test-icon-url')
+      expect(screen.getByText('Credential 1'))!.toBeInTheDocument()
+      expect(screen.getByText(/plugin.auth.default/))!.toBeInTheDocument()
 
       expect(usePluginAuthAction).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -168,7 +210,8 @@ describe('Card Component', () => {
       render(<Card item={emptyItem} />)
 
       // Assert
-      expect(screen.getByText(/plugin.auth.emptyAuth/)).toBeInTheDocument()
+      // Assert
+      expect(screen.getByText(/plugin.auth.emptyAuth/))!.toBeInTheDocument()
     })
   })
 
@@ -186,10 +229,12 @@ describe('Card Component', () => {
       fireEvent.click(screen.getByText(/operation.edit/))
 
       // Assert
-      expect(mockPluginAuthActionReturn.handleEdit).toHaveBeenCalledWith('c1', {
-        apiKey: 'key1',
-        __name__: 'Credential 1',
-        __credential_id__: 'c1',
+      await waitFor(() => {
+        expect(mockPluginAuthActionReturn.handleEdit).toHaveBeenCalledWith('c1', {
+          apiKey: 'key1',
+          __name__: 'Credential 1',
+          __credential_id__: 'c1',
+        })
       })
     })
 
@@ -200,7 +245,9 @@ describe('Card Component', () => {
       fireEvent.click(screen.getByText(/operation.remove/))
 
       // Assert
-      expect(mockPluginAuthActionReturn.openConfirm).toHaveBeenCalledWith('c1')
+      await waitFor(() => {
+        expect(mockPluginAuthActionReturn.openConfirm).toHaveBeenCalledWith('c1')
+      })
     })
 
     it('should handle "setDefault" action from Item component', async () => {
@@ -210,7 +257,9 @@ describe('Card Component', () => {
       fireEvent.click(screen.getByText(/auth.setDefault/))
 
       // Assert
-      expect(mockPluginAuthActionReturn.handleSetDefault).toHaveBeenCalledWith('c1')
+      await waitFor(() => {
+        expect(mockPluginAuthActionReturn.handleSetDefault).toHaveBeenCalledWith('c1')
+      })
     })
 
     it('should handle "rename" action from Item component', async () => {
@@ -218,7 +267,7 @@ describe('Card Component', () => {
       const oAuthItem = {
         ...mockItem,
         credentials_list: [{
-          ...mockItem.credentials_list[0],
+          ...mockItem.credentials_list[0]!,
           type: CredentialTypeEnum.OAUTH2,
         }],
       }
@@ -229,14 +278,16 @@ describe('Card Component', () => {
       fireEvent.click(screen.getByText(/operation.rename/))
 
       // Now it should show an input
-      const input = screen.getByPlaceholderText(/placeholder.input/)
+      const input = await screen.findByPlaceholderText(/placeholder.input/)
       fireEvent.change(input, { target: { value: 'New Name' } })
       fireEvent.click(screen.getByText(/operation.save/))
 
       // Assert
-      expect(mockPluginAuthActionReturn.handleRename).toHaveBeenCalledWith({
-        credential_id: 'c1',
-        name: 'New Name',
+      await waitFor(() => {
+        expect(mockPluginAuthActionReturn.handleRename).toHaveBeenCalledWith({
+          credential_id: 'c1',
+          name: 'New Name',
+        })
       })
     })
 
@@ -245,7 +296,7 @@ describe('Card Component', () => {
       const oAuthItem = {
         ...mockItem,
         credentials_list: [{
-          ...mockItem.credentials_list[0],
+          ...mockItem.credentials_list[0]!,
           type: CredentialTypeEnum.OAUTH2,
         }],
       }
@@ -268,7 +319,7 @@ describe('Card Component', () => {
       const oAuthItem = {
         ...mockItem,
         credentials_list: [{
-          ...mockItem.credentials_list[0],
+          ...mockItem.credentials_list[0]!,
           type: CredentialTypeEnum.OAUTH2,
         }],
       }
@@ -285,6 +336,60 @@ describe('Card Component', () => {
       })
       expect(openOAuthPopup).not.toHaveBeenCalled()
     })
+
+    it('should allow credential.use to set default without allowing credential management actions', async () => {
+      // Arrange
+      mockWorkspacePermissionKeys = ['credential.use']
+
+      const oAuthItem = {
+        ...mockItem,
+        credentials_list: [{
+          ...mockItem.credentials_list[0]!,
+          type: CredentialTypeEnum.OAUTH2,
+        }],
+      }
+      render(<Card item={oAuthItem} />)
+
+      // Act: setting the default is a credential-use action.
+      openDropdown('Credential 1')
+      fireEvent.click(screen.getByText(/auth.setDefault/))
+
+      // Assert
+      await waitFor(() => {
+        expect(mockPluginAuthActionReturn.handleSetDefault).toHaveBeenCalledWith('c1')
+      })
+
+      // Act: management actions remain blocked without credential.manage.
+      openDropdown('Credential 1')
+      fireEvent.click(screen.getByText(/operation.rename/))
+      expect(screen.queryByPlaceholderText(/placeholder.input/)).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByText(/dataSource.notion.changeAuthorizedPages/))
+
+      // Assert
+      expect(mockGetPluginOAuthUrl).not.toHaveBeenCalled()
+      expect(mockPluginAuthActionReturn.handleRename).not.toHaveBeenCalled()
+    })
+
+    it('should block credential actions when neither credential.use nor credential.manage is granted', async () => {
+      // Arrange
+      mockWorkspacePermissionKeys = []
+
+      render(<Card item={mockItem} />)
+
+      // Act
+      openDropdown('Credential 1')
+      fireEvent.click(screen.getByText(/auth.setDefault/))
+      fireEvent.click(screen.getByText(/operation.edit/))
+      fireEvent.click(screen.getByText(/operation.remove/))
+
+      // Assert
+      await waitFor(() => {
+        expect(mockPluginAuthActionReturn.handleSetDefault).not.toHaveBeenCalled()
+        expect(mockPluginAuthActionReturn.handleEdit).not.toHaveBeenCalled()
+        expect(mockPluginAuthActionReturn.openConfirm).not.toHaveBeenCalled()
+      })
+    })
   })
 
   describe('Modals', () => {
@@ -297,9 +402,10 @@ describe('Card Component', () => {
       render(<Card item={mockItem} />)
 
       // Assert
-      expect(screen.getByText(/list.delete.title/)).toBeInTheDocument()
+      // Assert
+      expect(screen.getByText(/list.delete.title/))!.toBeInTheDocument()
       const confirmButton = screen.getByText(/operation.confirm/).closest('button')
-      expect(confirmButton).toBeEnabled()
+      expect(confirmButton)!.toBeEnabled()
 
       // Act - Cancel
       fireEvent.click(screen.getByText(/operation.cancel/))
@@ -317,8 +423,9 @@ describe('Card Component', () => {
       render(<Card item={mockItem} disabled={false} />)
 
       // Assert
-      expect(screen.getByTestId('mock-api-key-modal')).toBeInTheDocument()
-      expect(screen.getByTestId('mock-api-key-modal')).toHaveAttribute('data-disabled', 'false')
+      // Assert
+      expect(screen.getByTestId('mock-api-key-modal'))!.toBeInTheDocument()
+      expect(screen.getByTestId('mock-api-key-modal'))!.toHaveAttribute('data-disabled', 'false')
 
       // Act
       fireEvent.click(screen.getByTestId('modal-close'))
@@ -337,7 +444,21 @@ describe('Card Component', () => {
       render(<Card item={mockItem} disabled={false} />)
 
       // Assert
-      expect(screen.getByTestId('mock-api-key-modal')).toHaveAttribute('data-disabled', 'true')
+      // Assert
+      expect(screen.getByTestId('mock-api-key-modal'))!.toHaveAttribute('data-disabled', 'true')
+    })
+
+    it('should disable ApiKeyModal when user lacks credential.manage', () => {
+      // Arrange
+      mockWorkspacePermissionKeys = ['credential.use']
+      const mockReturn = createMockPluginAuthActionReturn({ editValues: { some: 'value' }, doingAction: false })
+      vi.mocked(usePluginAuthAction).mockReturnValue(mockReturn)
+
+      // Act
+      render(<Card item={mockItem} disabled={false} />)
+
+      // Assert
+      expect(screen.getByTestId('mock-api-key-modal'))!.toHaveAttribute('data-disabled', 'true')
     })
   })
 
@@ -358,6 +479,30 @@ describe('Card Component', () => {
 
       // Assert
       expectAuthUpdated()
+    })
+
+    it('should disable configure credential actions when user lacks credential.create', () => {
+      // Arrange
+      mockWorkspacePermissionKeys = ['credential.use']
+      const configurableItem: DataSourceAuth = {
+        ...mockItem,
+        credential_schema: [{ name: 'api_key', type: FormTypeEnum.textInput, label: 'API Key', required: true }],
+        oauth_schema: {
+          client_schema: [{ name: 'oauth_key', type: FormTypeEnum.textInput, label: 'OAuth Key', required: true }],
+        },
+      }
+
+      // Act
+      render(<Card item={configurableItem} />)
+      fireEvent.click(screen.getByText(/dataSource.configure/))
+
+      // Assert
+      expect(screen.getByText('Add API Key')).toBeDisabled()
+      expect(screen.getByText('Add OAuth')).toBeDisabled()
+
+      fireEvent.click(screen.getByText('Add API Key'))
+      fireEvent.click(screen.getByText('Add OAuth'))
+      expect(mockInvalidateDataSourceListAuth).toHaveBeenCalledTimes(0)
     })
   })
 })

@@ -8,58 +8,32 @@ import { FlowType } from '@/types/common'
 
 import {
   useAvailableNodesMetaData,
-  useDSL,
   useGetRunAndTraceUrl,
   useInputFieldPanel,
   useNodesSyncDraft,
   usePipelineInit,
   usePipelineRefreshDraft,
-  usePipelineRun,
-  usePipelineStartRun,
 } from '../index'
 import { useConfigsMap } from '../use-configs-map'
 import { useConfigurations, useInitialData } from '../use-input-fields'
 import { usePipelineTemplate } from '../use-pipeline-template'
 
-// ============================================================================
-// Mocks
-// ============================================================================
-
-let mockSandboxEnabled = false
-
-// Mock the workflow store
 const _mockGetState = vi.fn()
 const mockUseStore = vi.fn()
 const mockUseWorkflowStore = vi.fn()
+const toastMocks = vi.hoisted(() => ({
+  error: vi.fn(),
+}))
 
 vi.mock('@/app/components/workflow/store', () => ({
   useStore: (selector: (state: Record<string, unknown>) => unknown) => mockUseStore(selector),
   useWorkflowStore: () => mockUseWorkflowStore(),
 }))
 
-// Mock react-i18next
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-  }),
-}))
-
-vi.mock('@/app/components/base/features/hooks', () => ({
-  useFeatures: (selector: (state: { features: { sandbox: { enabled: boolean } } }) => unknown) => selector({
-    features: {
-      sandbox: {
-        enabled: mockSandboxEnabled,
-      },
-    },
-  }),
-}))
-
-// Mock toast context
-const mockNotify = vi.fn()
-vi.mock('@/app/components/base/toast/context', () => ({
-  useToastContext: () => ({
-    notify: mockNotify,
-  }),
+vi.mock('@langgenius/dify-ui/toast', () => ({
+  toast: {
+    error: toastMocks.error,
+  },
 }))
 
 const mockEventEmit = vi.fn()
@@ -75,16 +49,11 @@ vi.mock('@/context/i18n', () => ({
   useDocLink: () => (path: string) => `https://docs.dify.ai${path}`,
 }))
 
-// Mock workflow constants
-vi.mock('@/app/components/workflow/constants', async (importOriginal) => {
-  const actual = await importOriginal() as Record<string, unknown>
-  return {
-    ...actual,
-    DSL_EXPORT_CHECK: 'DSL_EXPORT_CHECK',
-    WORKFLOW_DATA_UPDATE: 'WORKFLOW_DATA_UPDATE',
-    START_INITIAL_POSITION: { x: 100, y: 100 },
-  }
-})
+vi.mock('@/app/components/workflow/constants', () => ({
+  DSL_EXPORT_CHECK: 'DSL_EXPORT_CHECK',
+  WORKFLOW_DATA_UPDATE: 'WORKFLOW_DATA_UPDATE',
+  START_INITIAL_POSITION: { x: 100, y: 100 },
+}))
 
 vi.mock('@/app/components/workflow/constants/node', () => ({
   WORKFLOW_COMMON_NODES: [
@@ -95,18 +64,6 @@ vi.mock('@/app/components/workflow/constants/node', () => ({
     {
       metaData: { type: BlockEnum.End },
       defaultValue: { type: BlockEnum.End },
-    },
-    {
-      metaData: { type: BlockEnum.Command },
-      defaultValue: { type: BlockEnum.Command },
-    },
-    {
-      metaData: { type: BlockEnum.FileUpload },
-      defaultValue: { type: BlockEnum.FileUpload },
-    },
-    {
-      metaData: { type: BlockEnum.HumanInput },
-      defaultValue: { type: BlockEnum.HumanInput },
     },
   ],
 }))
@@ -155,14 +112,6 @@ vi.mock('@/service/workflow', () => ({
     environment_variables: [],
   }),
 }))
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-beforeEach(() => {
-  mockSandboxEnabled = false
-})
 
 describe('useConfigsMap', () => {
   beforeEach(() => {
@@ -436,12 +385,12 @@ describe('useConfigurations', () => {
     const { result } = renderHook(() => useConfigurations(variables))
 
     expect(result.current.length).toBe(1)
-    expect(result.current[0].variable).toBe('textVar')
-    expect(result.current[0].label).toBe('Text Label')
-    expect(result.current[0].required).toBe(true)
-    expect(result.current[0].maxLength).toBe(100)
-    expect(result.current[0].placeholder).toBe('Enter text')
-    expect(result.current[0].tooltip).toBe('Help text')
+    expect(result.current[0]!.variable).toBe('textVar')
+    expect(result.current[0]!.label).toBe('Text Label')
+    expect(result.current[0]!.required).toBe(true)
+    expect(result.current[0]!.maxLength).toBe(100)
+    expect(result.current[0]!.placeholder).toBe('Enter text')
+    expect(result.current[0]!.tooltip).toBe('Help text')
   })
 
   it('should transform options correctly', () => {
@@ -458,7 +407,7 @@ describe('useConfigurations', () => {
 
     const { result } = renderHook(() => useConfigurations(variables))
 
-    expect(result.current[0].options).toEqual([
+    expect(result.current[0]!.options).toEqual([
       { label: 'option1', value: 'option1' },
       { label: 'option2', value: 'option2' },
       { label: 'option3', value: 'option3' },
@@ -484,26 +433,6 @@ describe('useAvailableNodesMetaData', () => {
     expect(result.current.nodesMap).toBeDefined()
     expect(typeof result.current.nodesMap).toBe('object')
   })
-
-  it('should hide sandbox-only nodes when sandbox is disabled', () => {
-    mockSandboxEnabled = false
-    const { result } = renderHook(() => useAvailableNodesMetaData())
-    const nodeTypes = result.current.nodes.map(node => node.metaData.type)
-
-    expect(nodeTypes).not.toContain(BlockEnum.Command)
-    expect(nodeTypes).not.toContain(BlockEnum.FileUpload)
-    expect(nodeTypes).not.toContain(BlockEnum.HumanInput)
-  })
-
-  it('should keep sandbox-only nodes hidden even when sandbox is enabled', () => {
-    mockSandboxEnabled = true
-    const { result } = renderHook(() => useAvailableNodesMetaData())
-    const nodeTypes = result.current.nodes.map(node => node.metaData.type)
-
-    expect(nodeTypes).not.toContain(BlockEnum.Command)
-    expect(nodeTypes).not.toContain(BlockEnum.FileUpload)
-    expect(nodeTypes).not.toContain(BlockEnum.HumanInput)
-  })
 })
 
 describe('usePipelineTemplate', () => {
@@ -526,20 +455,9 @@ describe('usePipelineTemplate', () => {
   })
 })
 
-describe('useDSL', () => {
-  it('should be defined and exported', () => {
-    expect(useDSL).toBeDefined()
-    expect(typeof useDSL).toBe('function')
-  })
-})
-
 describe('exports', () => {
   it('should export useAvailableNodesMetaData', () => {
     expect(useAvailableNodesMetaData).toBeDefined()
-  })
-
-  it('should export useDSL', () => {
-    expect(useDSL).toBeDefined()
   })
 
   it('should export useGetRunAndTraceUrl', () => {
@@ -560,14 +478,6 @@ describe('exports', () => {
 
   it('should export usePipelineRefreshDraft', () => {
     expect(usePipelineRefreshDraft).toBeDefined()
-  })
-
-  it('should export usePipelineRun', () => {
-    expect(usePipelineRun).toBeDefined()
-  })
-
-  it('should export usePipelineStartRun', () => {
-    expect(usePipelineStartRun).toBeDefined()
   })
 })
 

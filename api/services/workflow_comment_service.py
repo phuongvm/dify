@@ -28,8 +28,10 @@ class WorkflowCommentService:
             raise ValueError("Comment content cannot exceed 1000 characters")
 
     @staticmethod
-    def _filter_valid_mentioned_user_ids(mentioned_user_ids: Sequence[str]) -> list[str]:
-        """Return deduplicated UUID user IDs in the order provided."""
+    def _filter_valid_mentioned_user_ids(
+        mentioned_user_ids: Sequence[str], *, session: Session, tenant_id: str
+    ) -> list[str]:
+        """Return deduplicated UUID user IDs that belong to the tenant, preserving input order."""
         unique_user_ids: list[str] = []
         seen: set[str] = set()
         for user_id in mentioned_user_ids:
@@ -41,7 +43,20 @@ class WorkflowCommentService:
                 continue
             seen.add(user_id)
             unique_user_ids.append(user_id)
-        return unique_user_ids
+        if not unique_user_ids:
+            return []
+
+        tenant_member_ids = {
+            str(account_id)
+            for account_id in session.scalars(
+                select(TenantAccountJoin.account_id).where(
+                    TenantAccountJoin.tenant_id == tenant_id,
+                    TenantAccountJoin.account_id.in_(unique_user_ids),
+                )
+            ).all()
+        }
+
+        return [user_id for user_id in unique_user_ids if user_id in tenant_member_ids]
 
     @staticmethod
     def _format_comment_excerpt(content: str, max_length: int = 200) -> str:
@@ -62,7 +77,7 @@ class WorkflowCommentService:
         mentioned_user_ids: Sequence[str],
         content: str,
     ) -> list[dict[str, str]]:
-        """Prepare email payloads for mentioned users, including the workflow app link."""
+        """Prepare email payloads for mentioned users, including workflow app link."""
         if not mentioned_user_ids:
             return []
 
@@ -70,8 +85,12 @@ class WorkflowCommentService:
         if not candidate_user_ids:
             return []
 
-        app_name = session.scalar(select(App.name).where(App.id == app_id, App.tenant_id == tenant_id)) or "Dify app"
-        commenter_name = session.scalar(select(Account.name).where(Account.id == mentioner_id)) or "Dify user"
+        app_name_value = session.scalar(select(App.name).where(App.id == app_id, App.tenant_id == tenant_id))
+        app_name = app_name_value if isinstance(app_name_value, str) and app_name_value else "Dify app"
+        commenter_name_value = session.scalar(select(Account.name).where(Account.id == mentioner_id))
+        commenter_name = (
+            commenter_name_value if isinstance(commenter_name_value, str) and commenter_name_value else "Dify user"
+        )
         comment_excerpt = WorkflowCommentService._format_comment_excerpt(content)
         base_url = dify_config.CONSOLE_WEB_URL.rstrip("/")
         app_url = f"{base_url}/app/{app_id}/workflow"
@@ -84,11 +103,20 @@ class WorkflowCommentService:
 
         payloads: list[dict[str, str]] = []
         for account in accounts:
+            email = account.email
+            if not isinstance(email, str) or not email:
+                continue
+            mentioned_name = account.name if isinstance(account.name, str) and account.name else email
+            language = (
+                account.interface_language
+                if isinstance(account.interface_language, str) and account.interface_language
+                else "en-US"
+            )
             payloads.append(
                 {
-                    "language": account.interface_language or "en-US",
-                    "to": account.email,
-                    "mentioned_name": account.name or account.email,
+                    "language": language,
+                    "to": email,
+                    "mentioned_name": mentioned_name,
                     "commenter_name": commenter_name,
                     "app_name": app_name,
                     "comment_content": comment_excerpt,
@@ -207,7 +235,11 @@ class WorkflowCommentService:
             session.flush()  # Get the comment ID for mentions
 
             # Create mentions if specified
-            mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(mentioned_user_ids or [])
+            mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(
+                mentioned_user_ids or [],
+                session=session,
+                tenant_id=tenant_id,
+            )
             for user_id in mentioned_user_ids:
                 mention = WorkflowCommentMention(
                     comment_id=comment.id,
@@ -242,7 +274,11 @@ class WorkflowCommentService:
         position_y: float | None = None,
         mentioned_user_ids: list[str] | None = None,
     ) -> dict:
-        """Update a workflow comment and notify newly mentioned users."""
+        """Update a workflow comment and notify newly mentioned users.
+
+        `mentioned_user_ids=None` means "leave mentions unchanged".
+        Passing an explicit list replaces the existing comment mentions, including clearing them with `[]`.
+        """
         WorkflowCommentService._validate_content(content)
 
         with Session(db.engine, expire_on_commit=False) as session:
@@ -268,38 +304,45 @@ class WorkflowCommentService:
             if position_y is not None:
                 comment.position_y = position_y
 
-            # Update mentions - first remove existing mentions for this comment only (not replies)
-            existing_mentions = session.scalars(
-                select(WorkflowCommentMention).where(
-                    WorkflowCommentMention.comment_id == comment.id,
-                    WorkflowCommentMention.reply_id.is_(None),  # Only comment mentions, not reply mentions
-                )
-            ).all()
-            existing_mentioned_user_ids = {mention.mentioned_user_id for mention in existing_mentions}
-            for mention in existing_mentions:
-                session.delete(mention)
+            mention_email_payloads: list[dict[str, str]] = []
+            if mentioned_user_ids is not None:
+                # Replace comment mentions only when the client explicitly sends the mention list.
+                existing_mentions = session.scalars(
+                    select(WorkflowCommentMention).where(
+                        WorkflowCommentMention.comment_id == comment.id,
+                        WorkflowCommentMention.reply_id.is_(None),  # Only comment mentions, not reply mentions
+                    )
+                ).all()
+                existing_mentioned_user_ids = {mention.mentioned_user_id for mention in existing_mentions}
+                for mention in existing_mentions:
+                    session.delete(mention)
 
-            # Add new mentions
-            mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(mentioned_user_ids or [])
-            new_mentioned_user_ids = [
-                user_id for user_id in mentioned_user_ids if user_id not in existing_mentioned_user_ids
-            ]
-            for user_id_str in mentioned_user_ids:
-                mention = WorkflowCommentMention(
-                    comment_id=comment.id,
-                    reply_id=None,  # This is a comment mention
-                    mentioned_user_id=user_id_str,
+                filtered_mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(
+                    mentioned_user_ids,
+                    session=session,
+                    tenant_id=tenant_id,
                 )
-                session.add(mention)
+                new_mentioned_user_ids = [
+                    mentioned_user_id
+                    for mentioned_user_id in filtered_mentioned_user_ids
+                    if mentioned_user_id not in existing_mentioned_user_ids
+                ]
+                for mentioned_user_id in filtered_mentioned_user_ids:
+                    mention = WorkflowCommentMention(
+                        comment_id=comment.id,
+                        reply_id=None,  # This is a comment mention
+                        mentioned_user_id=mentioned_user_id,
+                    )
+                    session.add(mention)
 
-            mention_email_payloads = WorkflowCommentService._build_mention_email_payloads(
-                session=session,
-                tenant_id=tenant_id,
-                app_id=app_id,
-                mentioner_id=user_id,
-                mentioned_user_ids=new_mentioned_user_ids,
-                content=content,
-            )
+                mention_email_payloads = WorkflowCommentService._build_mention_email_payloads(
+                    session=session,
+                    tenant_id=tenant_id,
+                    app_id=app_id,
+                    mentioner_id=user_id,
+                    mentioned_user_ids=new_mentioned_user_ids,
+                    content=content,
+                )
 
             session.commit()
             WorkflowCommentService._dispatch_mention_emails(mention_email_payloads)
@@ -367,7 +410,11 @@ class WorkflowCommentService:
             session.flush()  # Get the reply ID for mentions
 
             # Create mentions if specified
-            mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(mentioned_user_ids or [])
+            mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(
+                mentioned_user_ids or [],
+                session=session,
+                tenant_id=comment.tenant_id,
+            )
             for user_id in mentioned_user_ids:
                 # Create mention linking to specific reply
                 mention = WorkflowCommentMention(comment_id=comment_id, reply_id=reply.id, mentioned_user_id=user_id)
@@ -388,14 +435,52 @@ class WorkflowCommentService:
             return {"id": reply.id, "created_at": reply.created_at}
 
     @staticmethod
-    def update_reply(reply_id: str, user_id: str, content: str, mentioned_user_ids: list[str] | None = None) -> dict:
+    def _get_reply_in_comment_scope(
+        *,
+        session: Session,
+        tenant_id: str,
+        app_id: str,
+        comment_id: str,
+        reply_id: str,
+    ) -> WorkflowCommentReply:
+        """Get a reply scoped to tenant/app/comment to prevent cross-thread mutations."""
+        stmt = (
+            select(WorkflowCommentReply)
+            .join(WorkflowComment, WorkflowComment.id == WorkflowCommentReply.comment_id)
+            .where(
+                WorkflowCommentReply.id == reply_id,
+                WorkflowCommentReply.comment_id == comment_id,
+                WorkflowComment.tenant_id == tenant_id,
+                WorkflowComment.app_id == app_id,
+            )
+            .limit(1)
+        )
+        reply = session.scalar(stmt)
+        if not reply:
+            raise NotFound("Reply not found")
+        return reply
+
+    @staticmethod
+    def update_reply(
+        tenant_id: str,
+        app_id: str,
+        comment_id: str,
+        reply_id: str,
+        user_id: str,
+        content: str,
+        mentioned_user_ids: list[str] | None = None,
+    ) -> dict:
         """Update a comment reply and notify newly mentioned users."""
         WorkflowCommentService._validate_content(content)
 
         with Session(db.engine, expire_on_commit=False) as session:
-            reply = session.get(WorkflowCommentReply, reply_id)
-            if not reply:
-                raise NotFound("Reply not found")
+            reply = WorkflowCommentService._get_reply_in_comment_scope(
+                session=session,
+                tenant_id=tenant_id,
+                app_id=app_id,
+                comment_id=comment_id,
+                reply_id=reply_id,
+            )
 
             # Only the creator can update the reply
             if reply.created_by != user_id:
@@ -412,7 +497,15 @@ class WorkflowCommentService:
                 session.delete(mention)
 
             # Add mentions
-            mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(mentioned_user_ids or [])
+            raw_mentioned_user_ids = mentioned_user_ids or []
+            comment = session.get(WorkflowComment, reply.comment_id)
+            mentioned_user_ids = []
+            if comment:
+                mentioned_user_ids = WorkflowCommentService._filter_valid_mentioned_user_ids(
+                    raw_mentioned_user_ids,
+                    session=session,
+                    tenant_id=comment.tenant_id,
+                )
             new_mentioned_user_ids = [
                 user_id for user_id in mentioned_user_ids if user_id not in existing_mentioned_user_ids
             ]
@@ -423,7 +516,6 @@ class WorkflowCommentService:
                 session.add(mention)
 
             mention_email_payloads: list[dict[str, str]] = []
-            comment = session.get(WorkflowComment, reply.comment_id)
             if comment:
                 mention_email_payloads = WorkflowCommentService._build_mention_email_payloads(
                     session=session,
@@ -441,12 +533,16 @@ class WorkflowCommentService:
             return {"id": reply.id, "updated_at": reply.updated_at}
 
     @staticmethod
-    def delete_reply(reply_id: str, user_id: str) -> None:
+    def delete_reply(tenant_id: str, app_id: str, comment_id: str, reply_id: str, user_id: str) -> None:
         """Delete a comment reply."""
         with Session(db.engine, expire_on_commit=False) as session:
-            reply = session.get(WorkflowCommentReply, reply_id)
-            if not reply:
-                raise NotFound("Reply not found")
+            reply = WorkflowCommentService._get_reply_in_comment_scope(
+                session=session,
+                tenant_id=tenant_id,
+                app_id=app_id,
+                comment_id=comment_id,
+                reply_id=reply_id,
+            )
 
             # Only the creator can delete the reply
             if reply.created_by != user_id:

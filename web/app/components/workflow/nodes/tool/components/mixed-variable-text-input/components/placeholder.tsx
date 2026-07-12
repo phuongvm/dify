@@ -1,22 +1,18 @@
+import { cn } from '@langgenius/dify-ui/cn'
+import { Kbd } from '@langgenius/dify-ui/kbd'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
 import { $insertNodes, FOCUS_COMMAND } from 'lexical'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import Badge from '@/app/components/base/badge'
 import { CustomTextNode } from '@/app/components/base/prompt-editor/plugins/custom-text/node'
-import { cn } from '@/utils/classnames'
 
 type PlaceholderProps = {
   disableVariableInsertion?: boolean
-  hasSelectedAgent?: boolean
   hideBadge?: boolean
 }
 
-const Placeholder = ({
-  disableVariableInsertion = false,
-  hasSelectedAgent = false,
-  hideBadge = false,
-}: PlaceholderProps) => {
+const Placeholder = ({ disableVariableInsertion = false, hideBadge = false }: PlaceholderProps) => {
   const { t } = useTranslation()
   const [editor] = useLexicalComposerContext()
 
@@ -25,13 +21,13 @@ const Placeholder = ({
       const textNode = new CustomTextNode(text)
       $insertNodes([textNode])
     })
-    editor.dispatchCommand(FOCUS_COMMAND, new FocusEvent('focus'))
+    editor.dispatchCommand(FOCUS_COMMAND, undefined as any)
   }, [editor])
 
   return (
     <div
       className={cn(
-        'pointer-events-auto flex h-full w-full cursor-text px-2',
+        'pointer-events-auto flex size-full cursor-text px-2',
         !hideBadge ? 'items-center' : 'items-start py-1',
       )}
       onClick={(e) => {
@@ -43,9 +39,9 @@ const Placeholder = ({
         {t('nodes.tool.insertPlaceholder1', { ns: 'workflow' })}
         {(!disableVariableInsertion) && (
           <>
-            <div className="mx-0.5 flex h-4 w-4 items-center justify-center rounded bg-components-kbd-bg-gray text-text-placeholder system-kbd">/</div>
+            <Kbd className="mx-0.5 text-text-placeholder">/</Kbd>
             <div
-              className="cursor-pointer text-components-input-text-placeholder underline decoration-dotted decoration-auto underline-offset-auto system-sm-regular hover:text-text-tertiary"
+              className="cursor-pointer system-sm-regular text-components-input-text-placeholder underline decoration-dotted decoration-auto underline-offset-auto hover:text-text-tertiary"
               onMouseDown={((e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -54,21 +50,6 @@ const Placeholder = ({
             >
               {t('nodes.tool.insertPlaceholder2', { ns: 'workflow' })}
             </div>
-            {!hasSelectedAgent && (
-              <>
-                <div className="mx-0.5 flex h-4 w-4 items-center justify-center rounded bg-components-kbd-bg-gray text-text-placeholder system-kbd">@</div>
-                <div
-                  className="cursor-pointer text-components-input-text-placeholder underline decoration-dotted decoration-auto underline-offset-auto system-sm-regular hover:text-text-tertiary"
-                  onMouseDown={((e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    handleInsert('@')
-                  })}
-                >
-                  {t('nodes.tool.insertPlaceholder3', { ns: 'workflow' })}
-                </div>
-              </>
-            )}
           </>
         )}
       </div>

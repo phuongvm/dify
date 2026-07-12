@@ -1,9 +1,10 @@
 import type { FC, PointerEvent as ReactPointerEvent } from 'react'
+import { Avatar } from '@langgenius/dify-ui/avatar'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useAtomValue } from 'jotai'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import Avatar from '@/app/components/base/avatar'
-import { useAppContext } from '@/context/app-context'
-import { cn } from '@/utils/classnames'
+import { userProfileAtom } from '@/context/account-state'
 import { MentionInput } from './mention-input'
 
 type CommentInputProps = {
@@ -30,7 +31,7 @@ export const CommentInput: FC<CommentInputProps> = memo(({
 }) => {
   const [content, setContent] = useState('')
   const { t } = useTranslation()
-  const { userProfile } = useAppContext()
+  const userProfile = useAtomValue(userProfileAtom)
   const dragStateRef = useRef<{
     pointerId: number | null
     startPointerX: number
@@ -134,7 +135,7 @@ export const CommentInput: FC<CommentInputProps> = memo(({
   return (
     <div
       className={cn(
-        'absolute z-[60] w-96',
+        'absolute z-60 w-96',
         disabled && 'pointer-events-none opacity-80',
       )}
       style={{
@@ -148,18 +149,14 @@ export const CommentInput: FC<CommentInputProps> = memo(({
           className="relative shrink-0 cursor-move"
           onPointerDown={handleDragPointerDown}
         >
-          <div className="relative h-8 w-8 overflow-hidden rounded-br-full rounded-tl-full rounded-tr-full bg-primary-500">
-            <div className="absolute inset-[2px] overflow-hidden rounded-br-full rounded-tl-full rounded-tr-full bg-components-panel-bg-blur">
-              <div className="flex h-full w-full items-center justify-center">
-                <div className="h-6 w-6 overflow-hidden rounded-full">
-                  <Avatar
-                    avatar={userProfile.avatar_url}
-                    name={userProfile.name}
-                    size={24}
-                    className="h-full w-full"
-                  />
-                </div>
-              </div>
+          <div className="relative aspect-square h-8 w-8 shrink-0 rounded-tl-full rounded-tr-full rounded-br-full bg-primary-500 p-[2px]">
+            <div className="flex size-full items-center justify-center overflow-hidden rounded-tl-full rounded-tr-full rounded-br-full bg-components-panel-bg-blur p-[2px]">
+              <Avatar
+                avatar={userProfile.avatar_url}
+                name={userProfile.name}
+                size="sm"
+                className="block size-full rounded-full"
+              />
             </div>
           </div>
         </div>
@@ -168,7 +165,7 @@ export const CommentInput: FC<CommentInputProps> = memo(({
             'relative z-10 flex-1 rounded-xl border border-components-chat-input-border bg-components-panel-bg-blur pb-[4px] shadow-md',
           )}
         >
-          <div className="relative pl-[9px] pt-[4px]">
+          <div className="relative pt-[4px] pl-[9px]">
             <MentionInput
               value={content}
               onChange={setContent}

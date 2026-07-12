@@ -8,23 +8,23 @@ from core.plugin.entities.plugin_daemon import PluginModelProviderEntity
 from core.plugin.impl.model import PluginModelClient
 
 # import monkeypatch
-from dify_graph.model_runtime.entities.common_entities import I18nObject
-from dify_graph.model_runtime.entities.llm_entities import (
+from graphon.model_runtime.entities.common_entities import I18nObject
+from graphon.model_runtime.entities.llm_entities import (
     LLMMode,
     LLMResult,
     LLMResultChunk,
     LLMResultChunkDelta,
     LLMUsage,
 )
-from dify_graph.model_runtime.entities.message_entities import AssistantPromptMessage, PromptMessage, PromptMessageTool
-from dify_graph.model_runtime.entities.model_entities import (
+from graphon.model_runtime.entities.message_entities import AssistantPromptMessage, PromptMessage, PromptMessageTool
+from graphon.model_runtime.entities.model_entities import (
     AIModelEntity,
     FetchFrom,
     ModelFeature,
     ModelPropertyKey,
     ModelType,
 )
-from dify_graph.model_runtime.entities.provider_entities import ConfigurateMethod, ProviderEntity
+from graphon.model_runtime.entities.provider_entities import ConfigurateMethod, ProviderEntity
 
 
 class MockModelClass(PluginModelClient):
@@ -246,5 +246,6 @@ class MockModelClass(PluginModelClient):
         tools: list[PromptMessageTool] | None = None,
         stop: list[str] | None = None,
         stream: bool = True,
+        app_id: str | None = None,
     ):
         return MockModelClass.mocked_chat_create_stream(model=model, prompt_messages=prompt_messages, tools=tools)

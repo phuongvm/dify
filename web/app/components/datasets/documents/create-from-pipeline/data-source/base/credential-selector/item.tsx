@@ -31,7 +31,7 @@ const Item = ({
         name={name}
         size={20}
       />
-      <span className="grow truncate text-text-secondary system-sm-medium">
+      <span className="grow truncate system-sm-medium text-text-secondary">
         {name}
       </span>
       {

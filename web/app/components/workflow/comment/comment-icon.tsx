@@ -1,11 +1,12 @@
 'use client'
 
 import type { FC, PointerEvent as ReactPointerEvent } from 'react'
-import type { WorkflowCommentList } from '@/service/workflow-comment'
+import type { WorkflowCommentList } from '@/app/components/workflow/comment/types'
+import { useAtomValue } from 'jotai'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useReactFlow, useViewport } from 'reactflow'
 import { UserAvatarList } from '@/app/components/base/user-avatar-list'
-import { useAppContext } from '@/context/app-context'
+import { userProfileIdAtom } from '@/context/account-state'
 import CommentPreview from './comment-preview'
 
 type CommentIconProps = {
@@ -18,8 +19,8 @@ type CommentIconProps = {
 export const CommentIcon: FC<CommentIconProps> = memo(({ comment, onClick, isActive = false, onPositionUpdate }) => {
   const { flowToScreenPosition, screenToFlowPosition } = useReactFlow()
   const viewport = useViewport()
-  const { userProfile } = useAppContext()
-  const isAuthor = comment.created_by_account?.id === userProfile?.id
+  const currentUserId = useAtomValue(userProfileIdAtom)
+  const isAuthor = comment.created_by_account?.id === currentUserId
   const [showPreview, setShowPreview] = useState(false)
   const [dragPosition, setDragPosition] = useState<{ x: number, y: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -208,20 +209,21 @@ export const CommentIcon: FC<CommentIconProps> = memo(({ comment, onClick, isAct
           onMouseLeave={handleMouseLeave}
         >
           <div
-            className="relative h-10 rounded-br-full rounded-tl-full rounded-tr-full"
+            className="relative h-10 rounded-t-full rounded-br-full"
             style={{ width: dynamicWidth }}
           >
-            <div className={`absolute inset-[6px] overflow-hidden rounded-br-full rounded-tl-full rounded-tr-full border bg-components-panel-bg transition-shadow ${
+            <div className={`absolute inset-[6px] overflow-hidden rounded-tl-full rounded-tr-full rounded-br-full border bg-components-panel-bg transition-shadow ${
               isActive
                 ? 'border-primary-500 ring-1 ring-primary-500'
                 : 'border-components-panel-border'
             }`}
             >
-              <div className="flex h-full w-full items-center justify-center px-1">
+              <div className="flex size-full items-center justify-center px-1">
                 <UserAvatarList
                   users={participants}
                   maxVisible={3}
-                  size={24}
+                  size="sm"
+                  className="translate-y-[-1.5px]"
                 />
               </div>
             </div>

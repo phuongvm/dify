@@ -22,16 +22,3 @@ export type ResourceVarInputs = Record<string, {
   value?: string | ValueSelector | any
   nested_node_config?: NestedNodeConfig
 }>
-
-// Base resource interface
-export type BaseResource = {
-  name: string
-  [key: string]: any
-}
-
-// Base resource provider interface
-export type BaseResourceProvider = {
-  plugin_id?: string
-  name: string
-  [key: string]: any
-}

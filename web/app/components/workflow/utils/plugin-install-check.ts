@@ -7,16 +7,6 @@ import { CollectionType } from '@/app/components/tools/types'
 import { canFindTool } from '@/utils'
 import { BlockEnum } from '../types'
 
-export const PLUGIN_DEPENDENT_TYPES: BlockEnum[] = [
-  BlockEnum.Tool,
-  BlockEnum.DataSource,
-  BlockEnum.TriggerPlugin,
-]
-
-export function isPluginDependentNode(type: string): boolean {
-  return PLUGIN_DEPENDENT_TYPES.includes(type as BlockEnum)
-}
-
 export function matchToolInCollection(
   collection: ToolWithProvider[],
   data: { plugin_id?: string, provider_id?: string, provider_name?: string },
@@ -50,7 +40,7 @@ export function matchDataSource(
   )
 }
 
-export type PluginInstallCheckContext = {
+type PluginInstallCheckContext = {
   builtInTools?: ToolWithProvider[]
   customTools?: ToolWithProvider[]
   workflowTools?: ToolWithProvider[]

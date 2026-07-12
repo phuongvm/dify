@@ -2,15 +2,13 @@ import type { FC } from 'react'
 import type { SchemaEnumType } from '../../../../types'
 import type { AdvancedOptionsType } from './advanced-options'
 import type { TypeItem } from './type-selector'
+import { cn } from '@langgenius/dify-ui/cn'
 import { useUnmount } from 'ahooks'
 import * as React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useStore as useAppStore } from '@/app/components/app/store'
 import Divider from '@/app/components/base/divider'
-import { useFeatures } from '@/app/components/base/features/hooks'
 import { JSON_SCHEMA_MAX_DEPTH } from '@/config'
-import { cn } from '@/utils/classnames'
 import { ArrayType, Type } from '../../../../types'
 import { useMittContext } from '../context'
 import { useVisualEditorStore } from '../store'
@@ -46,26 +44,18 @@ const TYPE_OPTIONS = [
   { value: Type.number, text: 'number' },
   { value: Type.boolean, text: 'boolean' },
   { value: Type.object, text: 'object' },
-  { value: Type.file, text: 'file' },
   { value: ArrayType.string, text: 'array[string]' },
   { value: ArrayType.number, text: 'array[number]' },
   { value: ArrayType.object, text: 'array[object]' },
-  { value: ArrayType.file, text: 'array[file]' },
 ]
 
 const MAXIMUM_DEPTH_TYPE_OPTIONS = [
   { value: Type.string, text: 'string' },
   { value: Type.number, text: 'number' },
   { value: Type.boolean, text: 'boolean' },
-  { value: Type.file, text: 'file' },
   { value: ArrayType.string, text: 'array[string]' },
   { value: ArrayType.number, text: 'array[number]' },
-  { value: ArrayType.file, text: 'array[file]' },
 ]
-
-const FILE_TYPES: Set<Type | ArrayType> = new Set([Type.file, ArrayType.file])
-
-const filterFileTypes = (options: TypeItem[]) => options.filter(o => !FILE_TYPES.has(o.value))
 
 const EditCard: FC<EditCardProps> = ({
   fields,
@@ -83,19 +73,10 @@ const EditCard: FC<EditCardProps> = ({
   const { emit, useSubscribe } = useMittContext()
   const blurWithActions = useRef(false)
 
-  const isSandboxRuntime = useAppStore(s => s.appDetail?.runtime_type === 'sandboxed')
-  const isSandboxFeatureEnabled = useFeatures(s => s.features.sandbox?.enabled === true)
-  const isSupportSandbox = isSandboxRuntime || isSandboxFeatureEnabled
-
   const maximumDepthReached = depth === JSON_SCHEMA_MAX_DEPTH
   const disableAddBtn = maximumDepthReached || (currentFields.type !== Type.object && currentFields.type !== ArrayType.object)
   const hasAdvancedOptions = currentFields.type === Type.string || currentFields.type === Type.number
   const isAdvancedEditing = advancedEditing || isAddingNewField
-
-  const typeOptions = useMemo(() => {
-    const base = maximumDepthReached ? MAXIMUM_DEPTH_TYPE_OPTIONS : TYPE_OPTIONS
-    return isSupportSandbox ? base : filterFileTypes(base)
-  }, [maximumDepthReached, isSupportSandbox])
 
   const advancedOptions = useMemo(() => {
     let enumValue = ''
@@ -237,7 +218,7 @@ const EditCard: FC<EditCardProps> = ({
 
   return (
     <div className="flex flex-col rounded-lg bg-components-panel-bg py-0.5 shadow-sm shadow-shadow-shadow-4">
-      <div className="flex h-6 items-center pl-1 pr-0.5">
+      <div className="flex h-6 items-center pr-0.5 pl-1">
         <div className="flex grow items-center gap-x-1">
           <AutoWidthInput
             value={currentFields.name}
@@ -249,13 +230,12 @@ const EditCard: FC<EditCardProps> = ({
           />
           <TypeSelector
             currentValue={currentFields.type}
-            items={typeOptions}
+            items={maximumDepthReached ? MAXIMUM_DEPTH_TYPE_OPTIONS : TYPE_OPTIONS}
             onSelect={handleTypeChange}
-            popupClassName="z-[1000]"
           />
           {
             currentFields.required && (
-              <div className="px-1 py-0.5 text-text-warning system-2xs-medium-uppercase">
+              <div className="px-1 py-0.5 system-2xs-medium-uppercase text-text-warning">
                 {t('nodes.llm.jsonSchema.required', { ns: 'workflow' })}
               </div>
             )
@@ -288,7 +268,7 @@ const EditCard: FC<EditCardProps> = ({
         <div className={cn('flex', isAdvancedEditing ? 'p-2 pt-1' : 'px-2 pb-1')}>
           <input
             value={currentFields.description}
-            className="h-4 w-full p-0 text-text-tertiary caret-[#295EFF] outline-none system-xs-regular placeholder:text-text-placeholder placeholder:system-xs-regular"
+            className="h-4 w-full p-0 system-xs-regular text-text-tertiary caret-[#295EFF] outline-hidden placeholder:system-xs-regular placeholder:text-text-placeholder"
             placeholder={t('nodes.llm.jsonSchema.descriptionPlaceholder', { ns: 'workflow' })}
             onChange={handleDescriptionChange}
             onBlur={handleDescriptionBlur}

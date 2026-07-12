@@ -1,41 +1,39 @@
 // @ts-check
 
-import antfu, { GLOB_MARKDOWN, GLOB_MARKDOWN_CODE, GLOB_TESTS, GLOB_TS, GLOB_TSX, isInEditorEnv, isInGitHooksOrLintStaged } from '@antfu/eslint-config'
-import pluginReact from '@eslint-react/eslint-plugin'
+import path from 'node:path'
+import antfu, { GLOB_MARKDOWN, GLOB_MARKDOWN_CODE, GLOB_TESTS, GLOB_TS, GLOB_TSX } from '@antfu/eslint-config'
 import pluginQuery from '@tanstack/eslint-plugin-query'
 import md from 'eslint-markdown'
 import tailwindcss from 'eslint-plugin-better-tailwindcss'
 import hyoban from 'eslint-plugin-hyoban'
+import jsxA11y from 'eslint-plugin-jsx-a11y'
 import markdownPreferences from 'eslint-plugin-markdown-preferences'
-import { reactRefresh } from 'eslint-plugin-react-refresh'
-import sonar from 'eslint-plugin-sonarjs'
+import noBarrelFiles from 'eslint-plugin-no-barrel-files'
 import storybook from 'eslint-plugin-storybook'
 import {
+  GENERATED_IGNORES,
   HYOBAN_PREFER_TAILWIND_ICONS_OPTIONS,
   NEXT_PLATFORM_RESTRICTED_IMPORT_PATHS,
-  NEXT_PLATFORM_RESTRICTED_IMPORT_PATTERNS,
-  OVERLAY_MIGRATION_LEGACY_BASE_FILES,
-  OVERLAY_RESTRICTED_IMPORT_PATTERNS,
+  WEB_RESTRICTED_IMPORT_PATTERNS,
+  WEB_SERVICE_BASE_RESTRICTED_IMPORT_PATTERNS,
+  WEB_SERVICE_FETCH_RESTRICTED_IMPORT_PATTERNS,
 } from './eslint.constants.mjs'
 import dify from './plugins/eslint/index.js'
 
-// Enable Tailwind CSS IntelliSense mode for ESLint runs
-// See: tailwind-css-plugin.ts
-process.env.TAILWIND_MODE ??= 'ESLINT'
-
-const disableRuleAutoFix = !(isInEditorEnv() || isInGitHooksOrLintStaged())
-
-const plugins = pluginReact.configs.all.plugins
-
 export default antfu(
   {
-    react: false,
-    nextjs: true,
-    ignores: ['public', 'types/doc-paths.ts', 'app/components/workflow/skill/start-tab/templates/skills', 'eslint-suppressions.json'],
+    react: {
+      overrides: {
+        'react/set-state-in-effect': 'error',
+        'react/no-unnecessary-use-prefix': 'error',
+      },
+    },
+    ignores: ['public', 'types/doc-paths.ts', 'eslint-suppressions.json', ...GENERATED_IGNORES],
     typescript: {
       overrides: {
         'ts/consistent-type-definitions': ['error', 'type'],
         'ts/no-explicit-any': 'error',
+        'ts/no-redeclare': 'off',
       },
       erasableOnly: true,
     },
@@ -50,31 +48,27 @@ export default antfu(
       },
     },
     e18e: false,
-  },
-  {
-    plugins: {
-      'react': plugins?.['@eslint-react'],
-      'react-dom': plugins?.['@eslint-react/dom'],
-      'react-naming-convention': plugins?.['@eslint-react/naming-convention'],
-      'react-rsc': plugins?.['@eslint-react/rsc'],
-      'react-web-api': plugins?.['@eslint-react/web-api'],
-    },
-  },
-  {
-    files: [GLOB_TS, GLOB_TSX],
-    rules: {
-      ...pluginReact.configs['recommended-typescript'].rules,
-      'react/prefer-namespace-import': 'error',
-      'react/set-state-in-effect': 'error',
-    },
+    pnpm: false,
   },
   {
     files: [...GLOB_TESTS, GLOB_MARKDOWN_CODE, 'vitest.setup.ts', 'test/i18n-mock.ts'],
     rules: {
-      'react/component-hook-factories': 'off',
+      'react/no-unnecessary-use-prefix': 'off',
     },
   },
-  reactRefresh.configs.next(),
+  {
+    files: [GLOB_TSX],
+    ...jsxA11y.flatConfigs.recommended,
+  },
+  {
+    plugins: {
+      'no-barrel-files': noBarrelFiles,
+    },
+    ignores: ['next/**'],
+    rules: {
+      'no-barrel-files/no-barrel-files': 'error',
+    },
+  },
   markdownPreferences.configs.standard,
   {
     files: [GLOB_MARKDOWN],
@@ -98,7 +92,6 @@ export default antfu(
   {
     rules: {
       'node/prefer-global/process': 'off',
-      'next/no-img-element': 'off',
     },
   },
   {
@@ -111,16 +104,6 @@ export default antfu(
   },
   storybook.configs['flat/recommended'],
   ...pluginQuery.configs['flat/recommended'],
-  // sonar
-  {
-    rules: {
-      // Manually pick rules that are actually useful and not slow.
-      // Or we can just drop the plugin entirely.
-    },
-    plugins: {
-      sonarjs: sonar,
-    },
-  },
   {
     files: [GLOB_TS, GLOB_TSX],
     ignores: GLOB_TESTS,
@@ -132,6 +115,12 @@ export default antfu(
       'tailwindcss/no-duplicate-classes': 'error',
       'tailwindcss/no-unnecessary-whitespace': 'error',
       'tailwindcss/no-unknown-classes': 'warn',
+    },
+    settings: {
+      'better-tailwindcss': {
+        cwd: import.meta.dirname,
+        entryPoint: path.resolve(import.meta.dirname, './app/styles/globals.css'),
+      },
     },
   },
   {
@@ -150,7 +139,6 @@ export default antfu(
   {
     files: ['i18n/**/*.json'],
     rules: {
-      'sonarjs/max-lines': 'off',
       'max-lines': 'off',
       'jsonc/sort-keys': 'error',
 
@@ -160,59 +148,66 @@ export default antfu(
     },
   },
   {
-    files: ['**/package.json'],
-    rules: {
-      'hyoban/no-dependency-version-prefix': 'error',
-    },
-  },
-  {
-    name: 'dify/base-ui-primitives',
-    files: ['app/components/base/ui/**/*.tsx', 'app/components/base/avatar/**/*.tsx'],
-    rules: {
-      'react-refresh/only-export-components': 'off',
-    },
-  },
-  {
-    name: 'dify/no-direct-next-imports',
+    name: 'dify/restricted-imports',
     files: [GLOB_TS, GLOB_TSX],
     ignores: ['next/**'],
     rules: {
       'no-restricted-imports': ['error', {
         paths: NEXT_PLATFORM_RESTRICTED_IMPORT_PATHS,
-        patterns: NEXT_PLATFORM_RESTRICTED_IMPORT_PATTERNS,
+        patterns: WEB_RESTRICTED_IMPORT_PATTERNS,
       }],
     },
   },
   {
-    name: 'dify/overlay-migration',
-    files: [GLOB_TS, GLOB_TSX],
-    ignores: [
-      'next/**',
-      ...GLOB_TESTS,
-      ...OVERLAY_MIGRATION_LEGACY_BASE_FILES,
-    ],
+    name: 'dify/service-base-restricted-imports',
+    files: ['service/**/*.ts', 'service/**/*.tsx'],
     rules: {
       'no-restricted-imports': ['error', {
         paths: NEXT_PLATFORM_RESTRICTED_IMPORT_PATHS,
         patterns: [
-          ...NEXT_PLATFORM_RESTRICTED_IMPORT_PATTERNS,
-          ...OVERLAY_RESTRICTED_IMPORT_PATTERNS,
+          ...WEB_RESTRICTED_IMPORT_PATTERNS,
+          ...WEB_SERVICE_BASE_RESTRICTED_IMPORT_PATTERNS,
+          ...WEB_SERVICE_FETCH_RESTRICTED_IMPORT_PATTERNS,
         ],
       }],
     },
   },
+  {
+    name: 'dify/restricted-local-storage-access',
+    files: [GLOB_TS, GLOB_TSX],
+    ignores: [
+      ...GLOB_TESTS,
+      'vitest.setup.ts',
+      'instrumentation-client.ts',
+    ],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'localStorage',
+          message: 'Do not use localStorage directly. Use a foxact storage boundary instead; prefer feature-owned createLocalStorageState for shared storage.',
+        },
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'window',
+          property: 'localStorage',
+          message: 'Do not use window.localStorage directly. Use a foxact storage boundary instead; prefer feature-owned createLocalStorageState for shared storage.',
+        },
+        {
+          object: 'globalThis',
+          property: 'localStorage',
+          message: 'Do not use globalThis.localStorage directly. Use a foxact storage boundary instead; prefer feature-owned createLocalStorageState for shared storage.',
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportDeclaration[source.value="ahooks"] ImportSpecifier[imported.name="useLocalStorageState"]',
+          message: 'Do not use ahooks useLocalStorageState. Use foxact storage hooks instead.',
+        },
+      ],
+    },
+  },
 )
-  .disableRulesFix(disableRuleAutoFix
-    ? [
-        'tailwindcss/enforce-consistent-class-order',
-        'tailwindcss/no-duplicate-classes',
-        'tailwindcss/no-unnecessary-whitespace',
-      ]
-    : [])
-  .renamePlugins({
-    '@eslint-react': 'react',
-    '@eslint-react/dom': 'react-dom',
-    '@eslint-react/naming-convention': 'react-naming-convention',
-    '@eslint-react/rsc': 'react-rsc',
-    '@eslint-react/web-api': 'react-web-api',
-  })

@@ -2,7 +2,7 @@ import type {
   CommonNodeType,
   Node,
 } from '@/app/components/workflow/types'
-import { cn } from '@/utils/classnames'
+import { cn } from '@langgenius/dify-ui/cn'
 import Add from './add'
 import Item from './item'
 
@@ -33,7 +33,7 @@ const Container = ({
         branchName && (
           <div
             className={cn(
-              'flex items-center truncate px-2 text-text-tertiary system-2xs-semibold-uppercase',
+              'flex items-center truncate px-2 system-2xs-semibold-uppercase text-text-tertiary',
               isFailBranch && 'text-text-warning',
             )}
             title={branchName}

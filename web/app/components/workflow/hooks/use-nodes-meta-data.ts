@@ -7,6 +7,7 @@ import { useHooksStore } from '@/app/components/workflow/hooks-store'
 import GroupDefault from '@/app/components/workflow/nodes/group/default'
 import { useStore } from '@/app/components/workflow/store'
 import { BlockEnum } from '@/app/components/workflow/types'
+import { getNodeCatalogType } from '@/app/components/workflow/utils/node'
 import { useGetLanguage } from '@/context/i18n'
 import {
   useAllBuiltInTools,
@@ -35,7 +36,7 @@ export const useNodeMetaData = (node: Node) => {
   const dataSourceList = useStore(s => s.dataSourceList)
   const availableNodesMetaData = useNodesMetaData()
   const { data } = node
-  const nodeMetaData = availableNodesMetaData.nodesMap?.[data.type]
+  const nodeMetaData = availableNodesMetaData.nodesMap?.[getNodeCatalogType(data)]
   const author = useMemo(() => {
     if (data.type === BlockEnum.Group)
       return GroupDefault.metaData.author

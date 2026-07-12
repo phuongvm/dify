@@ -30,13 +30,6 @@ export const checkHasQueryBlock = (text: string) => {
     return false
   return text.includes(QUERY_PLACEHOLDER_TEXT)
 }
-
-export const checkHasRequestURLBlock = (text: string) => {
-  if (!text)
-    return false
-  return text.includes(REQUEST_URL_PLACEHOLDER_TEXT)
-}
-
 /*
 * {{#1711617514996.name#}} => [1711617514996, name]
 * {{#1711617514996.sys.query#}} => [sys, query]
@@ -45,17 +38,14 @@ export const getInputVars = (text: string): ValueSelector[] => {
   if (!text || typeof text !== 'string')
     return []
 
-  const allVars = text.match(/\{\{[@#]([^@#]*)[@#]\}\}/g)
+  const allVars = text.match(/\{\{#([^#]*)#\}\}/g)
   if (allVars && allVars?.length > 0) {
     // {{#context#}}, {{#query#}} is not input vars
     const inputVars = allVars
       .filter(item => item.includes('.'))
       .map((item) => {
-        const valueSelector = item
-          .replace(/^\{\{[@#]/, '')
-          .replace(/[@#]\}\}$/, '')
-          .split('.')
-        if (valueSelector[1] === 'sys' && /^\d+$/.test(valueSelector[0]))
+        const valueSelector = item.replace('{{#', '').replace('#}}', '').split('.')
+        if (valueSelector[1] === 'sys' && /^\d+$/.test(valueSelector[0]!))
           return valueSelector.slice(1)
 
         return valueSelector

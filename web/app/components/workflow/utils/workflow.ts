@@ -8,7 +8,6 @@ import {
 import {
   getOutgoers,
 } from 'reactflow'
-import { v4 as uuid4 } from 'uuid'
 import {
   BlockEnum,
 } from '../types'
@@ -20,8 +19,6 @@ export const canRunBySingle = (nodeType: BlockEnum, isChildNode: boolean) => {
   return nodeType === BlockEnum.LLM
     || nodeType === BlockEnum.KnowledgeRetrieval
     || nodeType === BlockEnum.Code
-    || nodeType === BlockEnum.Command
-    || nodeType === BlockEnum.FileUpload
     || nodeType === BlockEnum.TemplateTransform
     || nodeType === BlockEnum.QuestionClassifier
     || nodeType === BlockEnum.HttpRequest
@@ -29,6 +26,7 @@ export const canRunBySingle = (nodeType: BlockEnum, isChildNode: boolean) => {
     || nodeType === BlockEnum.ParameterExtractor
     || nodeType === BlockEnum.Iteration
     || nodeType === BlockEnum.Agent
+    || nodeType === BlockEnum.AgentV2
     || nodeType === BlockEnum.DocExtractor
     || nodeType === BlockEnum.Loop
     || nodeType === BlockEnum.Start
@@ -159,121 +157,6 @@ export const getValidTreeNodes = (nodes: Node[], edges: Edge[]) => {
     maxDepth,
   }
 }
-
-export const getCommonPredecessorNodeIds = (selectedNodeIds: string[], edges: Edge[]) => {
-  const uniqSelectedNodeIds = Array.from(new Set(selectedNodeIds))
-  if (uniqSelectedNodeIds.length <= 1)
-    return []
-
-  const selectedNodeIdSet = new Set(uniqSelectedNodeIds)
-  const predecessorNodeIdsMap = new Map<string, Set<string>>()
-
-  edges.forEach((edge) => {
-    if (!selectedNodeIdSet.has(edge.target))
-      return
-
-    const predecessors = predecessorNodeIdsMap.get(edge.target) ?? new Set<string>()
-    predecessors.add(edge.source)
-    predecessorNodeIdsMap.set(edge.target, predecessors)
-  })
-
-  let commonPredecessorNodeIds: Set<string> | null = null
-
-  uniqSelectedNodeIds.forEach((nodeId) => {
-    const predecessors = predecessorNodeIdsMap.get(nodeId) ?? new Set<string>()
-
-    if (!commonPredecessorNodeIds) {
-      commonPredecessorNodeIds = new Set(predecessors)
-      return
-    }
-
-    Array.from(commonPredecessorNodeIds).forEach((predecessorNodeId) => {
-      if (!predecessors.has(predecessorNodeId))
-        commonPredecessorNodeIds!.delete(predecessorNodeId)
-    })
-  })
-
-  return Array.from(commonPredecessorNodeIds ?? []).sort()
-}
-
-export type PredecessorHandle = {
-  nodeId: string
-  handleId: string
-}
-
-export const getCommonPredecessorHandles = (targetNodeIds: string[], edges: Edge[]): PredecessorHandle[] => {
-  const uniqTargetNodeIds = Array.from(new Set(targetNodeIds))
-  if (uniqTargetNodeIds.length === 0)
-    return []
-
-  // Get the "direct predecessor handler", which is:
-  // - edge.source (predecessor node)
-  // - edge.sourceHandle (the specific output handle of the predecessor; defaults to 'source' if not set)
-  // Used to handle multi-handle branch scenarios like If-Else / Classifier.
-  const targetNodeIdSet = new Set(uniqTargetNodeIds)
-  const predecessorHandleMap = new Map<string, Set<string>>() // targetNodeId -> Set<`${source}\0${handleId}`>
-  const delimiter = '\u0000'
-
-  edges.forEach((edge) => {
-    if (!targetNodeIdSet.has(edge.target))
-      return
-
-    const predecessors = predecessorHandleMap.get(edge.target) ?? new Set<string>()
-    const handleId = edge.sourceHandle || 'source'
-    predecessors.add(`${edge.source}${delimiter}${handleId}`)
-    predecessorHandleMap.set(edge.target, predecessors)
-  })
-
-  // Intersect predecessor handlers of all targets, keeping only handlers common to all targets.
-  let commonKeys: Set<string> | null = null
-
-  uniqTargetNodeIds.forEach((nodeId) => {
-    const keys = predecessorHandleMap.get(nodeId) ?? new Set<string>()
-
-    if (!commonKeys) {
-      commonKeys = new Set(keys)
-      return
-    }
-
-    Array.from(commonKeys).forEach((key) => {
-      if (!keys.has(key))
-        commonKeys!.delete(key)
-    })
-  })
-
-  return Array.from<string>(commonKeys ?? [])
-    .map((key) => {
-      const [nodeId, handleId] = key.split(delimiter)
-      return { nodeId, handleId }
-    })
-    .sort((a, b) => a.nodeId.localeCompare(b.nodeId) || a.handleId.localeCompare(b.handleId))
-}
-
-export const changeNodesAndEdgesId = (nodes: Node[], edges: Edge[]) => {
-  const idMap = nodes.reduce((acc, node) => {
-    acc[node.id] = uuid4()
-
-    return acc
-  }, {} as Record<string, string>)
-
-  const newNodes = nodes.map((node) => {
-    return {
-      ...node,
-      id: idMap[node.id],
-    }
-  })
-
-  const newEdges = edges.map((edge) => {
-    return {
-      ...edge,
-      source: idMap[edge.source],
-      target: idMap[edge.target],
-    }
-  })
-
-  return [newNodes, newEdges] as [Node[], Edge[]]
-}
-
 export const hasErrorHandleNode = (nodeType?: BlockEnum) => {
-  return nodeType === BlockEnum.LLM || nodeType === BlockEnum.Tool || nodeType === BlockEnum.HttpRequest || nodeType === BlockEnum.Code || nodeType === BlockEnum.Agent
+  return nodeType === BlockEnum.LLM || nodeType === BlockEnum.Tool || nodeType === BlockEnum.HttpRequest || nodeType === BlockEnum.Code || nodeType === BlockEnum.Agent || nodeType === BlockEnum.AgentV2
 }

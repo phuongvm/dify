@@ -1,13 +1,14 @@
-import type { FC } from 'react'
+import type { FC, ReactNode } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
 import * as React from 'react'
 import { useEffect, useRef } from 'react'
-import { cn } from '@/utils/classnames'
 
 type OptionListItemProps = {
   isSelected: boolean
   onClick: () => void
   noAutoScroll?: boolean
-} & React.LiHTMLAttributes<HTMLLIElement>
+  children: ReactNode
+}
 
 const OptionListItem: FC<OptionListItemProps> = ({
   isSelected,
@@ -25,16 +26,21 @@ const OptionListItem: FC<OptionListItemProps> = ({
   return (
     <li
       ref={listItemRef}
-      className={cn(
-        'flex cursor-pointer items-center justify-center rounded-md px-1.5 py-1 text-components-button-ghost-text system-xs-medium',
-        isSelected ? 'bg-components-button-ghost-bg-hover' : 'hover:bg-components-button-ghost-bg-hover',
-      )}
-      onClick={() => {
-        listItemRef.current?.scrollIntoView({ behavior: 'smooth' })
-        onClick()
-      }}
     >
-      {children}
+      <button
+        type="button"
+        className={cn(
+          'flex w-full cursor-pointer items-center justify-center rounded-md px-1.5 py-1 system-xs-medium text-components-button-ghost-text outline-hidden',
+          'focus-visible:inset-ring-1 focus-visible:inset-ring-components-input-border-hover',
+          isSelected ? 'bg-components-button-ghost-bg-hover' : 'hover:bg-components-button-ghost-bg-hover',
+        )}
+        onClick={() => {
+          listItemRef.current?.scrollIntoView({ behavior: 'smooth' })
+          onClick()
+        }}
+      >
+        {children}
+      </button>
     </li>
   )
 }

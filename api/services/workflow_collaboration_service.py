@@ -1,51 +1,139 @@
 from __future__ import annotations
 
 import logging
+import os
+import socket
 import time
+import uuid
 from collections.abc import Mapping
+from typing import Any, override
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from models.account import Account
+from models.model import App
 from repositories.workflow_collaboration_repository import WorkflowCollaborationRepository, WorkflowSessionInfo
+
+logger = logging.getLogger(__name__)
+
+SERVER_HEARTBEAT_INTERVAL_SECONDS = 30
+_PROCESS_SERVER_ID: str | None = None
+_PROCESS_SERVER_ID_PID: int | None = None
+
+
+def _get_process_server_id() -> str:
+    global _PROCESS_SERVER_ID, _PROCESS_SERVER_ID_PID  # pylint: disable=global-statement
+
+    pid = os.getpid()
+    if _PROCESS_SERVER_ID is None or pid != _PROCESS_SERVER_ID_PID:
+        _PROCESS_SERVER_ID_PID = pid
+        _PROCESS_SERVER_ID = f"{socket.gethostname()}:{pid}:{uuid.uuid4().hex}"
+    return _PROCESS_SERVER_ID
 
 
 class WorkflowCollaborationService:
-    def __init__(self, repository: WorkflowCollaborationRepository, socketio) -> None:
+    """
+    Coordinate workflow collaboration state across Socket.IO workers.
+
+    Socket.IO rooms are process-local unless backed by a message queue, while online users and leader election live in
+    Redis. Each websocket worker writes a small heartbeat keyed by `server_id`; session rows store their owner so a
+    worker can distinguish a live remote sid from a stale sid left behind by a dead worker.
+    """
+
+    _heartbeat_started: bool
+    _repository: WorkflowCollaborationRepository
+    _server_id_override: str | None
+    _socketio: Any
+
+    def __init__(
+        self, repository: WorkflowCollaborationRepository, socketio: Any, server_id: str | None = None
+    ) -> None:
         self._repository = repository
         self._socketio = socketio
+        self._server_id_override = server_id
+        self._heartbeat_started = False
 
+    @override
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(repository={self._repository})"
 
-    def save_session(self, sid: str, user: Account) -> None:
+    @property
+    def server_id(self) -> str:
+        return self._server_id_override or _get_process_server_id()
+
+    def _refresh_server_heartbeat(self) -> None:
+        self._repository.refresh_server_heartbeat(self.server_id)
+
+    def _server_heartbeat_loop(self) -> None:
+        while True:
+            try:
+                self._refresh_server_heartbeat()
+                self._repository.refresh_server_sessions(self.server_id)
+            except Exception:
+                logger.exception("Failed to refresh workflow collaboration server heartbeat")
+            self._socketio.sleep(SERVER_HEARTBEAT_INTERVAL_SECONDS)
+
+    def _ensure_server_heartbeat_started(self) -> None:
+        if self._heartbeat_started:
+            return
+
+        self._heartbeat_started = True
+        self._refresh_server_heartbeat()
+        self._socketio.start_background_task(self._server_heartbeat_loop)
+
+    def save_socket_identity(self, sid: str, user: Account) -> None:
+        """Persist the authenticated console user on the raw socket session."""
         self._socketio.save_session(
             sid,
             {
                 "user_id": user.id,
                 "username": user.name,
                 "avatar": user.avatar,
+                "tenant_id": user.current_tenant_id,
             },
         )
 
-    def register_session(self, workflow_id: str, sid: str) -> tuple[str, bool] | None:
-        session = self._socketio.get_session(sid)
-        user_id = session.get("user_id")
-        if not user_id:
+    def authorize_and_join_workflow_room(
+        self, workflow_id: str, sid: str, *, session: Session
+    ) -> tuple[str, bool] | None:
+        """
+        Join a collaboration room only after validating the socket session and tenant-scoped app access.
+
+        The Socket.IO payload still calls the room key `workflow_id`, but the identifier is the workflow app's
+        `App.id`. Returning `None` lets the controller reject the join before any Redis or room state is created.
+        """
+        socket_session = self._socketio.get_session(sid)
+        user_id = socket_session.get("user_id")
+        tenant_id = socket_session.get("tenant_id")
+        if not user_id or not tenant_id:
             return None
+
+        if not self._can_access_workflow(workflow_id, str(tenant_id), session=session):
+            logger.warning(
+                "Workflow collaboration join rejected: workflow_id=%s tenant_id=%s user_id=%s sid=%s",
+                workflow_id,
+                tenant_id,
+                user_id,
+                sid,
+            )
+            return None
+
+        self._ensure_server_heartbeat_started()
 
         session_info: WorkflowSessionInfo = {
             "user_id": str(user_id),
-            "username": str(session.get("username", "Unknown")),
-            "avatar": session.get("avatar"),
+            "username": str(socket_session.get("username", "Unknown")),
+            "avatar": socket_session.get("avatar"),
             "sid": sid,
             "connected_at": int(time.time()),
-            "graph_active": True,
-            "active_skill_file_id": None,
+            "server_id": self.server_id,
         }
 
         self._repository.set_session_info(workflow_id, session_info)
 
         leader_sid = self.get_or_set_leader(workflow_id, sid)
-        is_leader = leader_sid == sid if leader_sid else False
+        is_leader = leader_sid == sid
 
         self._socketio.enter_room(sid, workflow_id)
         self.broadcast_online_users(workflow_id)
@@ -54,18 +142,20 @@ class WorkflowCollaborationService:
 
         return str(user_id), is_leader
 
+    def _can_access_workflow(self, workflow_id: str, tenant_id: str, *, session: Session) -> bool:
+        """Check room access without relying on Flask's app-context-bound scoped session."""
+        app_id = session.scalar(select(App.id).where(App.id == workflow_id, App.tenant_id == tenant_id).limit(1))
+        return app_id is not None
+
     def disconnect_session(self, sid: str) -> None:
         mapping = self._repository.get_sid_mapping(sid)
         if not mapping:
             return
 
         workflow_id = mapping["workflow_id"]
-        active_skill_file_id = self._repository.get_active_skill_file_id(workflow_id, sid)
         self._repository.delete_session(workflow_id, sid)
 
         self.handle_leader_disconnect(workflow_id, sid)
-        if active_skill_file_id:
-            self.handle_skill_leader_disconnect(workflow_id, active_skill_file_id, sid)
         self.broadcast_online_users(workflow_id)
 
     def relay_collaboration_event(self, sid: str, data: Mapping[str, object]) -> tuple[dict[str, str], int]:
@@ -84,48 +174,10 @@ class WorkflowCollaborationService:
         if not event_type:
             return {"msg": "invalid event type"}, 400
 
-        if event_type == "graph_view_active":
-            is_active = False
-            if isinstance(event_data, dict):
-                is_active = bool(event_data.get("active") or False)
-            self._repository.set_graph_active(workflow_id, sid, is_active)
-            self.refresh_session_state(workflow_id, sid)
-            self.broadcast_online_users(workflow_id)
-            return {"msg": "graph_view_active_updated"}, 200
-
-        if event_type == "skill_file_active":
-            file_id = None
-            is_active = False
-            if isinstance(event_data, dict):
-                file_id = event_data.get("file_id")
-                is_active = bool(event_data.get("active") or False)
-
-            if not file_id or not isinstance(file_id, str):
-                return {"msg": "invalid skill_file_active payload"}, 400
-
-            previous_file_id = self._repository.get_active_skill_file_id(workflow_id, sid)
-            next_file_id = file_id if is_active else None
-
-            if previous_file_id == next_file_id:
-                self.refresh_session_state(workflow_id, sid)
-                return {"msg": "skill_file_active_unchanged"}, 200
-
-            self._repository.set_active_skill_file(workflow_id, sid, next_file_id)
-            self.refresh_session_state(workflow_id, sid)
-
-            if previous_file_id:
-                self._ensure_skill_leader(workflow_id, previous_file_id)
-            if next_file_id:
-                self._ensure_skill_leader(workflow_id, next_file_id, preferred_sid=sid)
-
-            return {"msg": "skill_file_active_updated"}, 200
-
         if event_type == "sync_request":
             leader_sid = self._repository.get_current_leader(workflow_id)
-            if leader_sid and (
-                self.is_session_active(workflow_id, leader_sid)
-                and self._repository.is_graph_active(workflow_id, leader_sid)
-            ):
+            target_sid: str | None
+            if leader_sid and self.is_session_active(workflow_id, leader_sid):
                 target_sid = leader_sid
             else:
                 if leader_sid:
@@ -134,6 +186,7 @@ class WorkflowCollaborationService:
                 if target_sid:
                     self._repository.set_leader(workflow_id, target_sid)
                     self.broadcast_leader_change(workflow_id, target_sid)
+
             if not target_sid:
                 return {"msg": "no_active_leader"}, 200
 
@@ -142,6 +195,7 @@ class WorkflowCollaborationService:
                 {"type": event_type, "userId": user_id, "data": event_data, "timestamp": timestamp},
                 room=target_sid,
             )
+
             return {"msg": "sync_request_forwarded"}, 200
 
         self._socketio.emit(
@@ -165,45 +219,27 @@ class WorkflowCollaborationService:
 
         return {"msg": "graph_update_broadcasted"}, 200
 
-    def relay_skill_event(self, sid: str, data: object) -> tuple[dict[str, str], int]:
-        mapping = self._repository.get_sid_mapping(sid)
-        if not mapping:
-            return {"msg": "unauthorized"}, 401
-
-        workflow_id = mapping["workflow_id"]
-        self.refresh_session_state(workflow_id, sid)
-
-        self._socketio.emit("skill_update", data, room=workflow_id, skip_sid=sid)
-
-        return {"msg": "skill_update_broadcasted"}, 200
-
-    def get_or_set_leader(self, workflow_id: str, sid: str) -> str | None:
+    def get_or_set_leader(self, workflow_id: str, sid: str) -> str:
         current_leader = self._repository.get_current_leader(workflow_id)
 
         if current_leader:
-            if self.is_session_active(workflow_id, current_leader) and self._repository.is_graph_active(
-                workflow_id, current_leader
-            ):
+            if self.is_session_active(workflow_id, current_leader):
                 return current_leader
             self._repository.delete_session(workflow_id, current_leader)
             self._repository.delete_leader(workflow_id)
 
-        new_leader_sid = self._select_graph_leader(workflow_id, preferred_sid=sid)
-        if not new_leader_sid:
-            return None
-
-        was_set = self._repository.set_leader_if_absent(workflow_id, new_leader_sid)
+        was_set = self._repository.set_leader_if_absent(workflow_id, sid)
 
         if was_set:
             if current_leader:
-                self.broadcast_leader_change(workflow_id, new_leader_sid)
-            return new_leader_sid
+                self.broadcast_leader_change(workflow_id, sid)
+            return sid
 
         current_leader = self._repository.get_current_leader(workflow_id)
         if current_leader:
             return current_leader
 
-        return new_leader_sid
+        return sid
 
     def handle_leader_disconnect(self, workflow_id: str, disconnected_sid: str) -> None:
         current_leader = self._repository.get_current_leader(workflow_id)
@@ -219,23 +255,6 @@ class WorkflowCollaborationService:
             self.broadcast_leader_change(workflow_id, new_leader_sid)
         else:
             self._repository.delete_leader(workflow_id)
-            self.broadcast_leader_change(workflow_id, None)
-
-    def handle_skill_leader_disconnect(self, workflow_id: str, file_id: str, disconnected_sid: str) -> None:
-        current_leader = self._repository.get_skill_leader(workflow_id, file_id)
-        if not current_leader:
-            return
-
-        if current_leader != disconnected_sid:
-            return
-
-        new_leader_sid = self._select_skill_leader(workflow_id, file_id)
-        if new_leader_sid:
-            self._repository.set_skill_leader(workflow_id, file_id, new_leader_sid)
-            self.broadcast_skill_leader_change(workflow_id, file_id, new_leader_sid)
-        else:
-            self._repository.delete_skill_leader(workflow_id, file_id)
-            self.broadcast_skill_leader_change(workflow_id, file_id, None)
 
     def broadcast_leader_change(self, workflow_id: str, new_leader_sid: str | None) -> None:
         for sid in self._repository.get_session_sids(workflow_id):
@@ -244,14 +263,6 @@ class WorkflowCollaborationService:
                 self._socketio.emit("status", {"isLeader": is_leader}, room=sid)
             except Exception:
                 logging.exception("Failed to emit leader status to session %s", sid)
-
-    def broadcast_skill_leader_change(self, workflow_id: str, file_id: str, new_leader_sid: str | None) -> None:
-        for sid in self._repository.get_session_sids(workflow_id):
-            try:
-                is_leader = new_leader_sid is not None and sid == new_leader_sid
-                self._socketio.emit("skill_status", {"file_id": file_id, "isLeader": is_leader}, room=sid)
-            except Exception:
-                logging.exception("Failed to emit skill leader status to session %s", sid)
 
     def get_current_leader(self, workflow_id: str) -> str | None:
         return self._repository.get_current_leader(workflow_id)
@@ -302,69 +313,27 @@ class WorkflowCollaborationService:
         )
 
     def refresh_session_state(self, workflow_id: str, sid: str) -> None:
+        self._refresh_server_heartbeat()
         self._repository.refresh_session_state(workflow_id, sid)
         self._ensure_leader(workflow_id, sid)
-        active_skill_file_id = self._repository.get_active_skill_file_id(workflow_id, sid)
-        if active_skill_file_id:
-            self._ensure_skill_leader(workflow_id, active_skill_file_id, preferred_sid=sid)
 
     def _ensure_leader(self, workflow_id: str, sid: str) -> None:
         current_leader = self._repository.get_current_leader(workflow_id)
-        if (
-            current_leader
-            and self.is_session_active(workflow_id, current_leader)
-            and self._repository.is_graph_active(workflow_id, current_leader)
-        ):
+        if current_leader and self.is_session_active(workflow_id, current_leader):
             self._repository.expire_leader(workflow_id)
             return
 
         if current_leader:
             self._repository.delete_leader(workflow_id)
 
-        new_leader_sid = self._select_graph_leader(workflow_id, preferred_sid=sid)
-        if not new_leader_sid:
-            self.broadcast_leader_change(workflow_id, None)
-            return
-
-        self._repository.set_leader(workflow_id, new_leader_sid)
-        self.broadcast_leader_change(workflow_id, new_leader_sid)
-
-    def _ensure_skill_leader(self, workflow_id: str, file_id: str, preferred_sid: str | None = None) -> None:
-        current_leader = self._repository.get_skill_leader(workflow_id, file_id)
-        active_sids = self._repository.get_active_skill_session_sids(workflow_id, file_id)
-        if current_leader and self.is_session_active(workflow_id, current_leader):
-            if current_leader in active_sids or not active_sids:
-                self._repository.expire_skill_leader(workflow_id, file_id)
-                return
-
-        if current_leader:
-            self._repository.delete_skill_leader(workflow_id, file_id)
-
-        new_leader_sid = self._select_skill_leader(workflow_id, file_id, preferred_sid=preferred_sid)
-        if not new_leader_sid:
-            self.broadcast_skill_leader_change(workflow_id, file_id, None)
-            return
-
-        self._repository.set_skill_leader(workflow_id, file_id, new_leader_sid)
-        self.broadcast_skill_leader_change(workflow_id, file_id, new_leader_sid)
+        self._repository.set_leader(workflow_id, sid)
+        self.broadcast_leader_change(workflow_id, sid)
 
     def _select_graph_leader(self, workflow_id: str, preferred_sid: str | None = None) -> str | None:
         session_sids = [
             session["sid"]
             for session in self._repository.list_sessions(workflow_id)
-            if session.get("graph_active") and self.is_session_active(workflow_id, session["sid"])
-        ]
-        if not session_sids:
-            return None
-        if preferred_sid and preferred_sid in session_sids:
-            return preferred_sid
-        return session_sids[0]
-
-    def _select_skill_leader(self, workflow_id: str, file_id: str, preferred_sid: str | None = None) -> str | None:
-        session_sids = [
-            sid
-            for sid in self._repository.get_active_skill_session_sids(workflow_id, file_id)
-            if self.is_session_active(workflow_id, sid)
+            if session.get("graph_active", True) and self.is_session_active(workflow_id, session["sid"])
         ]
         if not session_sids:
             return None
@@ -376,16 +345,24 @@ class WorkflowCollaborationService:
         if not sid:
             return False
 
-        try:
-            if not self._socketio.manager.is_connected(sid, "/"):
-                return False
-        except AttributeError:
+        mapping = self._repository.get_sid_mapping(sid)
+        if not mapping:
             return False
 
         if not self._repository.session_exists(workflow_id, sid):
             return False
 
-        if not self._repository.sid_mapping_exists(sid):
-            return False
+        server_id = mapping.get("server_id")
+        if not server_id:
+            return self._is_socket_connected_locally(sid)
 
-        return True
+        if server_id == self.server_id:
+            return self._is_socket_connected_locally(sid)
+
+        return self._repository.server_heartbeat_exists(server_id)
+
+    def _is_socket_connected_locally(self, sid: str) -> bool:
+        try:
+            return bool(self._socketio.manager.is_connected(sid, "/"))
+        except AttributeError:
+            return False

@@ -1,49 +1,30 @@
+import type { GetAccountProfileResponse } from '@dify/contracts/api/console/account/types.gen'
+import type { GetSystemFeaturesResponse } from '@dify/contracts/api/console/system-features/types.gen'
+import * as jestDomMatchers from '@testing-library/jest-dom/matchers'
 import { act, cleanup } from '@testing-library/react'
-import { mockAnimationsApi, mockResizeObserver } from 'jsdom-testing-mocks'
+import { getDefaultStore } from 'jotai'
+import { queryClientAtom } from 'jotai-tanstack-query'
 import * as React from 'react'
-import '@testing-library/jest-dom/vitest'
+import { afterEach, beforeEach, expect, vi } from 'vitest'
 import 'vitest-canvas-mock'
 
-mockResizeObserver()
-
-// Mock Web Animations API for Headless UI
-mockAnimationsApi()
-
-// Suppress act() warnings from @headlessui/react internal Transition component
-// These warnings are caused by Headless UI's internal async state updates, not our code
-const originalConsoleError = console.error
-console.error = (...args: unknown[]) => {
-  // Check all arguments for the Headless UI TransitionRootFn act warning
-  const fullMessage = args.map(arg => (typeof arg === 'string' ? arg : '')).join(' ')
-  if (fullMessage.includes('TransitionRootFn') && fullMessage.includes('not wrapped in act'))
-    return
-  originalConsoleError.apply(console, args)
+if (typeof expect.extend === 'function') {
+  expect.extend(jestDomMatchers)
 }
 
-// Fix for @headlessui/react compatibility with happy-dom
-// headlessui tries to override focus properties which may be read-only in happy-dom
+(
+  globalThis as typeof globalThis & {
+    BASE_UI_ANIMATIONS_DISABLED: boolean
+  }
+).BASE_UI_ANIMATIONS_DISABLED = true
+
+// Base UI waits for element animations while closing overlays.
 if (typeof window !== 'undefined') {
-  // Provide a minimal animations API polyfill before @headlessui/react boots
   if (typeof Element !== 'undefined' && !Element.prototype.getAnimations)
     Element.prototype.getAnimations = () => []
 
   if (!document.getAnimations)
     document.getAnimations = () => []
-
-  const ensureWritable = (target: object, prop: string) => {
-    const descriptor = Object.getOwnPropertyDescriptor(target, prop)
-    if (descriptor && !descriptor.writable) {
-      const original = descriptor.value ?? descriptor.get?.call(target)
-      Object.defineProperty(target, prop, {
-        value: typeof original === 'function' ? original : vi.fn(),
-        writable: true,
-        configurable: true,
-      })
-    }
-  }
-
-  ensureWritable(window, 'focus')
-  ensureWritable(HTMLElement.prototype, 'focus')
 }
 
 if (typeof globalThis.ResizeObserver === 'undefined') {
@@ -77,34 +58,33 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
   }
 }
 
-// Mock Element.scrollIntoView for tests (not available in happy-dom/jsdom)
-if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView)
-  Element.prototype.scrollIntoView = function () { /* noop */ }
-
-// Mock DOMRect.fromRect for tests (not available in jsdom)
-if (typeof DOMRect !== 'undefined' && typeof (DOMRect as typeof DOMRect & { fromRect?: unknown }).fromRect !== 'function') {
-  (DOMRect as typeof DOMRect & { fromRect: (rect?: DOMRectInit) => DOMRect }).fromRect = (rect = {}) => new DOMRect(
-    rect.x ?? 0,
-    rect.y ?? 0,
-    rect.width ?? 0,
-    rect.height ?? 0,
-  )
-}
+// Mock global fetch to prevent happy-dom from making real network calls
+// (which would cause ECONNREFUSED errors against localhost:5001).
+// Individual tests can still override via vi.spyOn(globalThis, 'fetch') or reassignment.
+globalThis.fetch = vi.fn(() =>
+  Promise.resolve(
+    new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  ),
+) as unknown as typeof fetch
 
 afterEach(async () => {
   // Wrap cleanup in act() to flush pending React scheduler work
   // This prevents "window is not defined" errors from React 19's scheduler
-  // which uses setImmediate/MessageChannel that can fire after jsdom cleanup
+  // which uses setImmediate/MessageChannel that can fire after DOM cleanup
   await act(async () => {
     cleanup()
   })
 })
 
-// mock foxact/use-clipboard - not available in test environment
+// mock custom clipboard hook - wraps writeTextToClipboard with fallback
 vi.mock('foxact/use-clipboard', () => ({
   useClipboard: () => ({
     copy: vi.fn(),
     copied: false,
+    reset: vi.fn(),
   }),
 }))
 
@@ -131,19 +111,97 @@ vi.mock('@floating-ui/react', async () => {
   }
 })
 
-// mock window.matchMedia
-Object.defineProperty(window, 'matchMedia', {
-  writable: true,
-  value: vi.fn().mockImplementation(query => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: vi.fn(), // deprecated
-    removeListener: vi.fn(), // deprecated
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
+vi.mock('@monaco-editor/react', () => {
+  const createEditorMock = () => {
+    const focusListeners: Array<() => void> = []
+    const blurListeners: Array<() => void> = []
+
+    return {
+      getContentHeight: vi.fn(() => 56),
+      onDidFocusEditorText: vi.fn((listener: () => void) => {
+        focusListeners.push(listener)
+        return { dispose: vi.fn() }
+      }),
+      onDidBlurEditorText: vi.fn((listener: () => void) => {
+        blurListeners.push(listener)
+        return { dispose: vi.fn() }
+      }),
+      layout: vi.fn(),
+      getAction: vi.fn(() => ({ run: vi.fn() })),
+      getModel: vi.fn(() => ({
+        getLineContent: vi.fn(() => ''),
+      })),
+      getPosition: vi.fn(() => ({ lineNumber: 1, column: 1 })),
+      deltaDecorations: vi.fn(() => []),
+      focus: vi.fn(() => {
+        focusListeners.forEach(listener => listener())
+      }),
+      setPosition: vi.fn(),
+      revealLine: vi.fn(),
+      trigger: vi.fn(),
+      __blur: () => {
+        blurListeners.forEach(listener => listener())
+      },
+    }
+  }
+
+  const monacoMock = {
+    editor: {
+      setTheme: vi.fn(),
+      defineTheme: vi.fn(),
+    },
+    Range: class {
+      startLineNumber: number
+      startColumn: number
+      endLineNumber: number
+      endColumn: number
+      constructor(startLineNumber: number, startColumn: number, endLineNumber: number, endColumn: number) {
+        this.startLineNumber = startLineNumber
+        this.startColumn = startColumn
+        this.endLineNumber = endLineNumber
+        this.endColumn = endColumn
+      }
+    },
+  }
+
+  const MonacoEditor = ({
+    value = '',
+    onChange,
+    onMount,
+    options,
+  }: {
+    value?: string
+    onChange?: (value: string | undefined) => void
+    onMount?: (editor: ReturnType<typeof createEditorMock>, monaco: typeof monacoMock) => void
+    options?: { readOnly?: boolean }
+  }) => {
+    const editorRef = React.useRef<ReturnType<typeof createEditorMock> | null>(null)
+    if (!editorRef.current)
+      editorRef.current = createEditorMock()
+
+    React.useEffect(() => {
+      onMount?.(editorRef.current!, monacoMock)
+    }, [onMount])
+
+    return React.createElement('textarea', {
+      'data-testid': 'monaco-editor',
+      'readOnly': options?.readOnly,
+      value,
+      'onChange': (event: React.ChangeEvent<HTMLTextAreaElement>) => onChange?.(event.target.value),
+      'onFocus': () => editorRef.current?.focus(),
+      'onBlur': () => editorRef.current?.__blur(),
+    })
+  }
+
+  return {
+    __esModule: true,
+    default: MonacoEditor,
+    Editor: MonacoEditor,
+    loader: {
+      config: vi.fn(),
+      init: vi.fn().mockResolvedValue(monacoMock),
+    },
+  }
 })
 
 // Mock localStorage for testing
@@ -171,8 +229,101 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
 })
 
+const testAccountProfileQueryKey = [
+  ['console', 'account', 'profile', 'get'],
+  { type: 'query' },
+] as const
+
+const testSystemFeaturesQueryKey = [
+  ['console', 'systemFeatures', 'get'],
+  { type: 'query' },
+] as const
+
+const testAccountProfile = {
+  profile: {
+    id: 'user-1',
+    name: 'Test User',
+    email: 'test@dify.ai',
+    avatar: '',
+    avatar_url: null,
+    is_password_set: false,
+    timezone: 'UTC',
+  },
+  meta: {
+    currentVersion: null,
+    currentEnv: null,
+  },
+} satisfies {
+  profile: GetAccountProfileResponse
+  meta: {
+    currentVersion: string | null
+    currentEnv: string | null
+  }
+}
+
+const testSystemFeatures = {
+  enable_app_deploy: false,
+  sso_enforced_for_signin: false,
+  sso_enforced_for_signin_protocol: '',
+  enable_marketplace: false,
+  enable_email_code_login: false,
+  enable_email_password_login: true,
+  enable_social_oauth_login: false,
+  enable_collaboration_mode: true,
+  is_allow_create_workspace: false,
+  is_allow_register: false,
+  is_email_setup: false,
+  enable_change_email: true,
+  max_plugin_package_size: 15728640,
+  license: {
+    status: 'none',
+    expired_at: '',
+    workspaces: {
+      enabled: false,
+      size: 0,
+      limit: 0,
+    },
+  },
+  branding: {
+    enabled: false,
+    login_page_logo: '',
+    workspace_logo: '',
+    favicon: '',
+    application_title: '',
+  },
+  webapp_auth: {
+    enabled: false,
+    allow_sso: false,
+    sso_config: {
+      protocol: '',
+    },
+    allow_email_code_login: false,
+    allow_email_password_login: false,
+  },
+  plugin_installation_permission: {
+    plugin_installation_scope: 'all',
+    restrict_to_marketplace_only: false,
+  },
+  plugin_manager: {
+    enabled: false,
+  },
+  rbac_enabled: false,
+  enable_creators_platform: false,
+  enable_trial_app: false,
+  enable_explore_banner: false,
+  enable_learn_app: true,
+} satisfies GetSystemFeaturesResponse
+
+const seedResolvedAppContextQueries = () => {
+  const queryClient = getDefaultStore().get(queryClientAtom)
+
+  queryClient.setQueryData(testAccountProfileQueryKey, testAccountProfile)
+  queryClient.setQueryData(testSystemFeaturesQueryKey, testSystemFeatures)
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  seedResolvedAppContextQueries()
   mockLocalStorage = createMockLocalStorage()
   Object.defineProperty(globalThis, 'localStorage', {
     value: mockLocalStorage,

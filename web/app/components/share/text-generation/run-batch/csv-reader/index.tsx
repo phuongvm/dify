@@ -1,5 +1,6 @@
 'use client'
 import type { FC } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
 import * as React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -7,11 +8,10 @@ import {
   useCSVReader,
 } from 'react-papaparse'
 import { Csv as CSVIcon } from '@/app/components/base/icons/src/public/files'
-import { cn } from '@/utils/classnames'
 
-export type Props = {
+type Props = Readonly<{
   onParsed: (data: string[][]) => void
-}
+}>
 
 const CSVReader: FC<Props> = ({
   onParsed,
@@ -53,7 +53,7 @@ const CSVReader: FC<Props> = ({
                     <div className="flex w-full items-center space-x-2">
                       <CSVIcon className="shrink-0" />
                       <div className="flex w-0 grow">
-                        <span className="max-w-[calc(100%_-_30px)] truncate text-text-secondary">{acceptedFile.name.replace(/.csv$/, '')}</span>
+                        <span className="max-w-[calc(100%-30px)] truncate text-text-secondary">{acceptedFile.name.replace(/.csv$/, '')}</span>
                         <span className="shrink-0 text-text-tertiary">.csv</span>
                       </div>
                     </div>

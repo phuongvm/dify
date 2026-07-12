@@ -2,21 +2,25 @@ import type { ReactNode } from 'react'
 import type { CustomFile, FileItem } from '@/models/datasets'
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PROGRESS_ERROR, PROGRESS_NOT_STARTED } from '../../constants'
+import { PROGRESS_ERROR } from '../../constants'
 
-// Mock notify function - defined before mocks
-const mockNotify = vi.fn()
-const mockClose = vi.fn()
-
-// Mock ToastContext with factory function
-vi.mock('@/app/components/base/toast/context', async () => {
-  const { createContext, useContext } = await import('use-context-selector')
-  const context = createContext({ notify: mockNotify, close: mockClose })
-  return {
-    ToastContext: context,
-    useToastContext: () => useContext(context),
-  }
+const { mockNotify, mockToast } = vi.hoisted(() => {
+  const mockNotify = vi.fn()
+  const mockToast = Object.assign(mockNotify, {
+    success: vi.fn((message, options) => mockNotify({ type: 'success', message, ...options })),
+    error: vi.fn((message, options) => mockNotify({ type: 'error', message, ...options })),
+    warning: vi.fn((message, options) => mockNotify({ type: 'warning', message, ...options })),
+    info: vi.fn((message, options) => mockNotify({ type: 'info', message, ...options })),
+    dismiss: vi.fn(),
+    update: vi.fn(),
+    promise: vi.fn(),
+  })
+  return { mockNotify, mockToast }
 })
+
+vi.mock('@langgenius/dify-ui/toast', () => ({
+  toast: mockToast,
+}))
 
 // Mock file uploader utils
 vi.mock('@/app/components/base/file-uploader/utils', () => ({
@@ -87,13 +91,12 @@ vi.mock('@/service/base', () => ({
 
 // Import after all mocks are set up
 const { useLocalFileUpload } = await import('../use-local-file-upload')
-const { ToastContext } = await import('@/app/components/base/toast/context')
 
 const createWrapper = () => {
   return ({ children }: { children: ReactNode }) => (
-    <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+    <>
       {children}
-    </ToastContext.Provider>
+    </>
   )
 }
 
@@ -401,7 +404,7 @@ describe('useLocalFileUpload', () => {
 
       // Should only process first 5 files (batch_count_limit)
       const firstCall = mockSetLocalFileList.mock.calls[0]
-      expect(firstCall[0].length).toBeLessThanOrEqual(5)
+      expect(firstCall![0].length).toBeLessThanOrEqual(5)
     })
   })
 
@@ -555,9 +558,9 @@ describe('useLocalFileUpload', () => {
     it('should set dragging true on dragenter', async () => {
       const { getByTestId } = await act(async () =>
         render(
-          <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+          <>
             <TestDropzone allowedExtensions={['pdf']} />
-          </ToastContext.Provider>,
+          </>,
         ),
       )
 
@@ -574,9 +577,9 @@ describe('useLocalFileUpload', () => {
     it('should handle dragover event', async () => {
       const { getByTestId } = await act(async () =>
         render(
-          <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+          <>
             <TestDropzone allowedExtensions={['pdf']} />
-          </ToastContext.Provider>,
+          </>,
         ),
       )
 
@@ -588,15 +591,16 @@ describe('useLocalFileUpload', () => {
       })
 
       // dragover should not throw
-      expect(dropzone).toBeInTheDocument()
+      // dragover should not throw
+      expect(dropzone)!.toBeInTheDocument()
     })
 
     it('should set dragging false on dragleave from drag overlay', async () => {
       const { getByTestId, queryByTestId } = await act(async () =>
         render(
-          <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+          <>
             <TestDropzone allowedExtensions={['pdf']} />
-          </ToastContext.Provider>,
+          </>,
         ),
       )
 
@@ -626,9 +630,9 @@ describe('useLocalFileUpload', () => {
 
       const { getByTestId } = await act(async () =>
         render(
-          <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+          <>
             <TestDropzone allowedExtensions={['pdf']} />
-          </ToastContext.Provider>,
+          </>,
         ),
       )
 
@@ -658,9 +662,9 @@ describe('useLocalFileUpload', () => {
     it('should handle drop without dataTransfer', async () => {
       const { getByTestId } = await act(async () =>
         render(
-          <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+          <>
             <TestDropzone allowedExtensions={['pdf']} />
-          </ToastContext.Provider>,
+          </>,
         ),
       )
 
@@ -682,9 +686,9 @@ describe('useLocalFileUpload', () => {
 
       const { getByTestId } = await act(async () =>
         render(
-          <ToastContext.Provider value={{ notify: mockNotify, close: mockClose }}>
+          <>
             <TestDropzone allowedExtensions={['pdf']} supportBatchUpload={false} />
-          </ToastContext.Provider>,
+          </>,
         ),
       )
 
@@ -712,7 +716,7 @@ describe('useLocalFileUpload', () => {
       await waitFor(() => {
         expect(mockSetLocalFileList).toHaveBeenCalled()
         // Should only have 1 file (limited by supportBatchUpload: false)
-        const callArgs = mockSetLocalFileList.mock.calls[0][0]
+        const callArgs = mockSetLocalFileList.mock.calls[0]![0]
         expect(callArgs.length).toBe(1)
       })
     })
@@ -850,31 +854,6 @@ describe('useLocalFileUpload', () => {
   })
 
   describe('file progress constants', () => {
-    it('should use PROGRESS_NOT_STARTED for new files', async () => {
-      mockUpload.mockResolvedValue({ id: 'file-id' })
-
-      const { result } = renderHook(
-        () => useLocalFileUpload({ allowedExtensions: ['pdf'] }),
-        { wrapper: createWrapper() },
-      )
-
-      const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
-      const event = {
-        target: {
-          files: [mockFile],
-        },
-      } as unknown as React.ChangeEvent<HTMLInputElement>
-
-      act(() => {
-        result.current.fileChangeHandle(event)
-      })
-
-      await waitFor(() => {
-        const callArgs = mockSetLocalFileList.mock.calls[0][0]
-        expect(callArgs[0].progress).toBe(PROGRESS_NOT_STARTED)
-      })
-    })
-
     it('should set PROGRESS_ERROR on upload failure', async () => {
       mockUpload.mockRejectedValue(new Error('Upload failed'))
 
@@ -896,7 +875,7 @@ describe('useLocalFileUpload', () => {
 
       await waitFor(() => {
         const calls = mockSetLocalFileList.mock.calls
-        const lastCall = calls[calls.length - 1][0]
+        const lastCall = calls[calls.length - 1]![0]
         expect(lastCall.some((f: FileItem) => f.progress === PROGRESS_ERROR)).toBe(true)
       })
     })

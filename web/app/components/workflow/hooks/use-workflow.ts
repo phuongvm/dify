@@ -1,10 +1,10 @@
 import type {
   Connection,
 } from 'reactflow'
-import type { GroupNodeData } from '../nodes/group/types'
 import type { IterationNodeType } from '../nodes/iteration/types'
 import type { LoopNodeType } from '../nodes/loop/types'
 import type {
+  BlockEnum,
   Edge,
   Node,
   ValueSelector,
@@ -26,14 +26,18 @@ import { useNodesMetaData } from '.'
 import {
   SUPPORT_OUTPUT_VARS_NODE,
 } from '../constants'
+import { useHooksStore } from '../hooks-store'
 import { findUsedVarNodes, getNodeOutputVars, updateNodeVars } from '../nodes/_base/components/variable/utils'
+
 import { CUSTOM_NOTE_NODE } from '../note-node/constants'
 import {
   useStore,
   useWorkflowStore,
 } from '../store'
-
-import { BlockEnum, WorkflowRunningStatus } from '../types'
+import {
+  WorkflowRunningStatus,
+} from '../types'
+import { getNodeCatalogType } from '../utils'
 import {
   getWorkflowEntryNode,
   isWorkflowEntryNode,
@@ -251,7 +255,7 @@ export const useWorkflow = () => {
 
   const isVarUsedInNodes = useCallback((varSelector: ValueSelector) => {
     const nodeId = varSelector[0]
-    const afterNodes = getAfterNodesInSameBranch(nodeId)
+    const afterNodes = getAfterNodesInSameBranch(nodeId!)
     const effectNodes = findUsedVarNodes(varSelector, afterNodes)
     return effectNodes.length > 0
   }, [getAfterNodesInSameBranch])
@@ -259,7 +263,7 @@ export const useWorkflow = () => {
   const removeUsedVarInNodes = useCallback((varSelector: ValueSelector) => {
     const nodeId = varSelector[0]
     const { nodes, setNodes } = collaborativeWorkflow.getState()
-    const afterNodes = getAfterNodesInSameBranch(nodeId)
+    const afterNodes = getAfterNodesInSameBranch(nodeId!)
     const effectNodes = findUsedVarNodes(varSelector, afterNodes)
     if (effectNodes.length > 0) {
       const newNodes = nodes.map((node) => {
@@ -346,7 +350,7 @@ export const useWorkflow = () => {
     return startNodes
   }, [nodesMap, getRootNodesById])
 
-  const isValidConnection = useCallback(({ source, sourceHandle, target }: Connection) => {
+  const isValidConnection = useCallback(({ source, sourceHandle: _sourceHandle, target }: Connection) => {
     const { nodes, edges } = collaborativeWorkflow.getState()
     const sourceNode: Node = nodes.find(node => node.id === source)!
     const targetNode: Node = nodes.find(node => node.id === target)!
@@ -357,42 +361,17 @@ export const useWorkflow = () => {
     if (sourceNode.parentId !== targetNode.parentId)
       return false
 
-    // For Group nodes, use the leaf node's type for validation
-    // sourceHandle format: "${leafNodeId}-${originalSourceHandle}"
-    let actualSourceType = sourceNode.data.type
-    if (sourceNode.data.type === BlockEnum.Group && sourceHandle) {
-      const lastDashIndex = sourceHandle.lastIndexOf('-')
-      if (lastDashIndex > 0) {
-        const leafNodeId = sourceHandle.substring(0, lastDashIndex)
-        const leafNode = nodes.find(node => node.id === leafNodeId)
-        if (leafNode)
-          actualSourceType = leafNode.data.type
-      }
-    }
-
     if (sourceNode && targetNode) {
-      const sourceNodeAvailableNextNodes = getAvailableBlocks(actualSourceType, !!sourceNode.parentId).availableNextBlocks
-      const targetNodeAvailablePrevNodes = getAvailableBlocks(targetNode.data.type, !!targetNode.parentId).availablePrevBlocks
+      const sourceNodeCatalogType = getNodeCatalogType(sourceNode.data)
+      const targetNodeCatalogType = getNodeCatalogType(targetNode.data)
+      const sourceNodeAvailableNextNodes = getAvailableBlocks(sourceNodeCatalogType, !!sourceNode.parentId).availableNextBlocks
+      const targetNodeAvailablePrevNodes = getAvailableBlocks(targetNodeCatalogType, !!targetNode.parentId).availablePrevBlocks
 
-      if (targetNode.data.type === BlockEnum.Group) {
-        const groupData = targetNode.data as GroupNodeData
-        const headNodeIds = groupData.headNodeIds || []
-        if (headNodeIds.length > 0) {
-          const headNode = nodes.find(node => node.id === headNodeIds[0])
-          if (headNode) {
-            const headNodeAvailablePrevNodes = getAvailableBlocks(headNode.data.type, !!targetNode.parentId).availablePrevBlocks
-            if (!headNodeAvailablePrevNodes.includes(actualSourceType))
-              return false
-          }
-        }
-      }
-      else {
-        if (!sourceNodeAvailableNextNodes.includes(targetNode.data.type))
-          return false
+      if (!sourceNodeAvailableNextNodes.includes(targetNodeCatalogType))
+        return false
 
-        if (!targetNodeAvailablePrevNodes.includes(actualSourceType))
-          return false
-      }
+      if (!targetNodeAvailablePrevNodes.includes(sourceNodeCatalogType))
+        return false
     }
 
     const hasCycle = (node: Node, visited = new Set()) => {
@@ -442,19 +421,26 @@ export const useWorkflow = () => {
 export const useWorkflowReadOnly = () => {
   const workflowStore = useWorkflowStore()
   const workflowRunningData = useStore(s => s.workflowRunningData)
+  const canvasReadOnly = useStore(s => s.canvasReadOnly)
 
   const getWorkflowReadOnly = useCallback(() => {
-    return workflowStore.getState().workflowRunningData?.result.status === WorkflowRunningStatus.Running
+    const {
+      canvasReadOnly,
+      workflowRunningData,
+    } = workflowStore.getState()
+
+    return canvasReadOnly || workflowRunningData?.result.status === WorkflowRunningStatus.Running
   }, [workflowStore])
 
   return {
-    workflowReadOnly: workflowRunningData?.result.status === WorkflowRunningStatus.Running,
+    workflowReadOnly: canvasReadOnly || workflowRunningData?.result.status === WorkflowRunningStatus.Running,
     getWorkflowReadOnly,
   }
 }
 
-export const useNodesReadOnly = () => {
+const useNodesReadOnlyBase = (canEdit: boolean) => {
   const workflowStore = useWorkflowStore()
+  const canvasReadOnly = useStore(s => s.canvasReadOnly)
   const workflowRunningData = useStore(s => s.workflowRunningData)
   const historyWorkflowData = useStore(s => s.historyWorkflowData)
   const isRestoring = useStore(s => s.isRestoring)
@@ -464,25 +450,40 @@ export const useNodesReadOnly = () => {
       workflowRunningData,
       historyWorkflowData,
       isRestoring,
+      canvasReadOnly,
     } = workflowStore.getState()
 
     return !!(
-      workflowRunningData?.result.status === WorkflowRunningStatus.Running
+      canvasReadOnly
+      || !canEdit
+      || workflowRunningData?.result.status === WorkflowRunningStatus.Running
       || workflowRunningData?.result.status === WorkflowRunningStatus.Paused
       || historyWorkflowData
       || isRestoring
     )
-  }, [workflowStore])
+  }, [workflowStore, canEdit])
 
   return {
     nodesReadOnly: !!(
-      workflowRunningData?.result.status === WorkflowRunningStatus.Running
+      canvasReadOnly
+      || !canEdit
+      || workflowRunningData?.result.status === WorkflowRunningStatus.Running
       || workflowRunningData?.result.status === WorkflowRunningStatus.Paused
       || historyWorkflowData
       || isRestoring
     ),
     getNodesReadOnly,
   }
+}
+
+export const useNodesReadOnlyByCanEdit = (canEdit: boolean) => {
+  return useNodesReadOnlyBase(canEdit)
+}
+
+export const useNodesReadOnly = () => {
+  const canEdit = useHooksStore(s => s.accessControl.canEdit)
+
+  return useNodesReadOnlyBase(canEdit)
 }
 
 export const useIsNodeInIteration = (iterationId: string) => {
@@ -516,7 +517,6 @@ export const useIsNodeInLoop = (loopId: string) => {
       return false
 
     if (node.parentId === loopId)
-
       return true
 
     return false
